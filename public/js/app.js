@@ -448,6 +448,7 @@
     try {
       const res = await api.getFiles({ category: 'movies' });
       const movies = res.files || [];
+      state.files = movies;
       const grid = document.getElementById('movies-grid-container');
       if (!grid) return;
 
@@ -1061,23 +1062,50 @@
     modal.classList.remove('open');
   }
 
-  global.playVideoFile = function (fileId) {
-    const file = state.files.find(f => f.id === fileId);
-    if (!file) return;
-    videoPlayer.playFile(file);
+  global.playVideoFile = async function (fileId) {
+    let file = state.files.find(f => f.id === fileId);
+    if (!file) {
+      try {
+        const res = await api.getFiles();
+        file = (res.files || []).find(f => f.id === fileId);
+      } catch (e) {}
+    }
+    if (!file) {
+      showToast('Video file not found.', 'error');
+      return;
+    }
+    await videoPlayer.playFile(file);
   };
 
-  global.downloadFile = function (fileId) {
-    const file = state.files.find(f => f.id === fileId);
-    if (file && file.streamUrl) {
+  global.downloadFile = async function (fileId) {
+    let file = state.files.find(f => f.id === fileId);
+    if (!file) {
+      try {
+        const res = await api.getFiles();
+        file = (res.files || []).find(f => f.id === fileId);
+      } catch (e) {}
+    }
+
+    let url = null;
+    if (global.api && global.api.getFileBlobUrl) {
+      try {
+        url = await global.api.getFileBlobUrl(fileId);
+      } catch (e) {}
+    }
+    if (!url && file && file.streamUrl && !file.streamUrl.startsWith('/api')) {
+      url = file.streamUrl;
+    }
+
+    if (url) {
       const a = document.createElement('a');
-      a.href = file.streamUrl;
-      a.download = file.original_name || file.name;
+      a.href = url;
+      a.download = (file && (file.original_name || file.name)) || 'download';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       return;
     }
+
     window.open(`/api/files/download/${fileId}?token=${api.token || ''}`, '_blank');
   };
 
