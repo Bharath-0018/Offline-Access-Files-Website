@@ -425,20 +425,32 @@ class ApiService {
       return this.request(`/files/${fileId}`, { method: 'DELETE' });
     }
 
-    async getFileBlobUrl(fileId) {
-      if (this.fileBlobCache.has(fileId)) {
-        const cached = this.fileBlobCache.get(fileId);
-        try {
-          return URL.createObjectURL(cached);
-        } catch (e) {}
+    async getFileBlobUrl(fileId, forceMimeType = null) {
+      let blob = this.fileBlobCache.get(fileId);
+      if (!blob) {
+        blob = await idbGetBlob(fileId);
+        if (blob) {
+          this.fileBlobCache.set(fileId, blob);
+        }
       }
 
-      const blob = await idbGetBlob(fileId);
       if (blob) {
-        this.fileBlobCache.set(fileId, blob);
         try {
-          return URL.createObjectURL(blob);
-        } catch (e) {}
+          let toUrl = blob;
+          if (forceMimeType) {
+            toUrl = blob.slice(0, blob.size, forceMimeType);
+          } else {
+            const files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
+            const f = files.find(x => x.id === fileId);
+            const name = ((f && (f.original_name || f.name)) || '').toLowerCase();
+            if (name.endsWith('.mkv') && (!blob.type || blob.type === 'video/x-matroska' || blob.type === 'application/octet-stream')) {
+              toUrl = blob.slice(0, blob.size, 'video/webm');
+            }
+          }
+          return URL.createObjectURL(toUrl);
+        } catch (e) {
+          console.warn('Error creating blob url:', e);
+        }
       }
       return null;
     }
@@ -563,9 +575,16 @@ class ApiService {
         category = 'documents';
       }
 
+      let storedBlob = file;
+      if (lower.endsWith('.mkv')) {
+        try {
+          storedBlob = file.slice(0, file.size, 'video/webm');
+        } catch (e) {}
+      }
+
       let streamUrl = '';
       try {
-        streamUrl = URL.createObjectURL(file);
+        streamUrl = URL.createObjectURL(storedBlob);
       } catch (e) {}
 
       const newFile = {
@@ -574,14 +593,14 @@ class ApiService {
         original_name: file.name,
         size_bytes: file.size,
         category: category,
-        mime_type: file.type || 'application/octet-stream',
+        mime_type: lower.endsWith('.mkv') ? 'video/webm' : (file.type || 'application/octet-stream'),
         streamUrl: streamUrl,
         created_at: new Date().toISOString()
       };
 
       // Store in active cache & IndexedDB for persistent video streaming and downloading
-      this.fileBlobCache.set(newFile.id, file);
-      await idbPutBlob(newFile.id, file);
+      this.fileBlobCache.set(newFile.id, storedBlob);
+      await idbPutBlob(newFile.id, storedBlob);
 
       const files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
       files.unshift(newFile);
