@@ -3,7 +3,7 @@ const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const REPO_NAME = 'Velora';
+const REPO_NAME = 'Offline-Access-Files-Website';
 const REPO_DESC = 'An offline-first personal file sharing and storage platform for secure, fast device-to-device file transfer without relying on the internet.';
 const OWNER = 'Bharath-0018';
 
