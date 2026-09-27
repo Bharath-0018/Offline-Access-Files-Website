@@ -1,14 +1,15 @@
 @echo off
-title Velora GitHub Publisher
+title GitHub Clean & Sync
 echo ====================================================================
-echo             VELORA GITHUB REPOSITORY AUTO-PUBLISHER
+echo             GITHUB REPOSITORY CLEAN & SYNC
 echo ====================================================================
-echo  Target: https://github.com/Bharath-0018/Velora
+echo  Target: https://github.com/Bharath-0018/Offline-Access-Files-Website
+echo  Action: Removes Vercel/Render files & updates clean project files
 echo ====================================================================
 echo.
-echo If you don't have a GitHub Personal Access Token yet:
+echo If you need a GitHub Personal Access Token:
 echo 1. Open: https://github.com/settings/tokens/new
-echo 2. Set Note: "Velora Deploy"
+echo 2. Set Note: "Clean Sync"
 echo 3. Check the "repo" box
 echo 4. Click "Generate token" and copy it
 echo.
