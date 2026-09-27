@@ -1,70 +1,6 @@
-// public/js/api.js - Client HTTP API, Chunked Streaming Uploader & Universal Offline Fallback
+// public/js/api.js - Client HTTP API, Chunked Streaming Uploader & Universal Storage Engine
 (function (global) {
-  const isStaticPages = window.location.hostname.endsWith('github.io');
   const API_BASE = '/api';
-
-  const DEFAULT_DEMO_FILES = [
-    {
-      id: 'f_movie_001',
-      name: 'Big_Buck_Bunny_1080p.mp4',
-      original_name: 'Big Buck Bunny (1080p Cinema Demo).mp4',
-      size_bytes: 1583296720,
-      category: 'movies',
-      mime_type: 'video/mp4',
-      streamUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      play_position_seconds: 42,
-      created_at: new Date(Date.now() - 3600000).toISOString()
-    },
-    {
-      id: 'f_movie_002',
-      name: 'Tears_of_Steel_4K.mp4',
-      original_name: 'Tears of Steel (4K Sci-Fi Cinema Short).mp4',
-      size_bytes: 3840296000,
-      category: 'movies',
-      mime_type: 'video/mp4',
-      streamUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-      play_position_seconds: 0,
-      created_at: new Date(Date.now() - 7200000).toISOString()
-    },
-    {
-      id: 'f_movie_003',
-      name: 'Sintel_Animation.mp4',
-      original_name: 'Sintel (Blender Open Movie Project).mp4',
-      size_bytes: 842190240,
-      category: 'movies',
-      mime_type: 'video/mp4',
-      streamUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-      play_position_seconds: 0,
-      created_at: new Date(Date.now() - 14400000).toISOString()
-    },
-    {
-      id: 'f_doc_001',
-      name: 'OfflineAccess_Architecture_Whitepaper.pdf',
-      original_name: 'OfflineAccess - Architecture & Local P2P Whitepaper.pdf',
-      size_bytes: 4829100,
-      category: 'documents',
-      mime_type: 'application/pdf',
-      created_at: new Date(Date.now() - 86400000).toISOString()
-    },
-    {
-      id: 'f_audio_001',
-      name: 'Acoustic_Soundtrack_Lossless.mp3',
-      original_name: 'Acoustic Studio Master (Lossless Audio).mp3',
-      size_bytes: 12580000,
-      category: 'audio',
-      mime_type: 'audio/mp3',
-      created_at: new Date(Date.now() - 120000000).toISOString()
-    },
-    {
-      id: 'f_img_001',
-      name: 'Local_Network_Topology.png',
-      original_name: 'Offline Air-Gapped Network Topology Diagram.png',
-      size_bytes: 2340000,
-      category: 'images',
-      mime_type: 'image/png',
-      created_at: new Date(Date.now() - 180000000).toISOString()
-    }
-  ];
 
   class ApiService {
     constructor() {
@@ -72,8 +8,23 @@
       this.user = JSON.parse(localStorage.getItem('cloud_user') || 'null');
       this.activeUploads = new Map();
 
-      if (!localStorage.getItem('offline_files_data')) {
-        localStorage.setItem('offline_files_data', JSON.stringify(DEFAULT_DEMO_FILES));
+      // Ensure storage is initialized cleanly with NO dummy/demo files
+      try {
+        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
+        // Purge any old hardcoded demo files from browser storage
+        files = files.filter(f => 
+          f && f.id &&
+          !String(f.id).startsWith('f_movie_00') &&
+          !String(f.id).startsWith('f_doc_00') &&
+          !String(f.id).startsWith('f_audio_00') &&
+          !String(f.id).startsWith('f_img_00') &&
+          !String(f.name || '').includes('Big_Buck_Bunny') &&
+          !String(f.name || '').includes('Tears_of_Steel') &&
+          !String(f.name || '').includes('Sintel')
+        );
+        localStorage.setItem('offline_files_data', JSON.stringify(files));
+      } catch (e) {
+        localStorage.setItem('offline_files_data', '[]');
       }
     }
 
@@ -98,10 +49,6 @@
     }
 
     async request(endpoint, options = {}) {
-      if (isStaticPages) {
-        return this.mockStaticRequest(endpoint, options);
-      }
-
       const url = `${API_BASE}${endpoint}`;
       const headers = this.getHeaders(options.headers || {});
 
@@ -119,6 +66,7 @@
           window.dispatchEvent(new CustomEvent('auth:expired'));
         }
         if (res.status === 404) {
+          // Serverless / static environment fallback (e.g. Vercel static hosting)
           return this.mockStaticRequest(endpoint, options);
         }
         const data = await res.json().catch(() => ({}));
@@ -127,7 +75,7 @@
         }
         return data;
       } catch (err) {
-        console.warn(`Falling back to local browser state for ${endpoint}:`, err.message);
+        // Fall back to client storage when backend is not reached
         return this.mockStaticRequest(endpoint, options);
       }
     }
@@ -142,38 +90,23 @@
         }
       } catch (e) {}
 
-      // Auth me
+      const method = (options.method || 'GET').toUpperCase();
+
+      // Auth - current user
       if (endpoint === '/auth/me') {
-        const user = this.user || {
-          id: 'u_bharath',
-          name: 'Bharath Kumar',
-          email: 'bharath@offlineaccess.io',
-          role: 'owner'
-        };
+        const user = this.user || null;
         return { user };
       }
 
-      // Demo Seed
-      if (endpoint === '/demo/seed') {
-        const user = {
-          id: 'u_bharath',
-          name: 'Bharath Kumar',
-          email: 'bharath@offlineaccess.io',
-          role: 'owner'
-        };
-        const token = 'demo_session_token_' + Date.now();
-        this.setAuth(token, user);
-        localStorage.setItem('offline_files_data', JSON.stringify(DEFAULT_DEMO_FILES));
-        return { success: true, token, user };
-      }
-
-      // Login
+      // Auth - login
       if (endpoint === '/auth/login') {
-        const email = body.email || 'bharath@offlineaccess.io';
+        const email = body.email || 'user@example.com';
+        const namePart = email.split('@')[0].replace(/[._]/g, ' ');
+        const name = namePart.charAt(0).toUpperCase() + namePart.slice(1);
         const user = {
           id: 'u_' + Math.random().toString(36).slice(2, 8),
-          name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-          email,
+          name: name,
+          email: email,
           role: 'owner'
         };
         const token = 'session_' + Date.now();
@@ -181,22 +114,26 @@
         return { sessionToken: token, user };
       }
 
-      // Register
+      // Auth - register
       if (endpoint === '/auth/register') {
+        const email = body.email || 'user@example.com';
         return {
           success: true,
-          email: body.email,
+          email: email,
           otpCode: '849201',
           requiresVerification: true
         };
       }
 
-      // Verify OTP
+      // Auth - verify OTP
       if (endpoint === '/auth/verify-otp') {
+        const email = body.email || 'user@example.com';
+        const namePart = email.split('@')[0].replace(/[._]/g, ' ');
+        const name = namePart.charAt(0).toUpperCase() + namePart.slice(1);
         const user = {
           id: 'u_' + Math.random().toString(36).slice(2, 8),
-          name: (body.email || 'User').split('@')[0],
-          email: body.email || 'user@offlineaccess.io',
+          name: name,
+          email: email,
           role: 'owner'
         };
         const token = 'otp_verified_' + Date.now();
@@ -204,26 +141,58 @@
         return { token, user };
       }
 
-      // Logout
+      // Auth - logout
       if (endpoint === '/auth/logout') {
         this.setAuth(null, null);
         return { success: true };
       }
 
-      // Storage stats
+      // Storage stats - accurately calculated from user's files
       if (endpoint === '/storage/stats') {
         const files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
         const used = files.reduce((acc, f) => acc + (f.size_bytes || 0), 0);
-        const quota = 50 * 1024 * 1024 * 1024;
+        const quota = 50 * 1024 * 1024 * 1024; // 50 GB
+        const cats = [
+          { category: 'movies', count: files.filter(f => f.category === 'movies').length },
+          { category: 'documents', count: files.filter(f => f.category === 'documents').length },
+          { category: 'images', count: files.filter(f => f.category === 'images').length },
+          { category: 'audio', count: files.filter(f => f.category === 'audio').length },
+          { category: 'others', count: files.filter(f => f.category === 'others').length }
+        ];
         return {
           usedBytes: used,
           quotaBytes: quota,
           percentUsed: Math.min(100, parseFloat(((used / quota) * 100).toFixed(1))),
-          fileCount: files.length
+          fileCount: files.length,
+          categories: cats
         };
       }
 
-      // Files list
+      // Delete file
+      if (endpoint.startsWith('/files/') && method === 'DELETE') {
+        const parts = endpoint.split('/');
+        const id = parts[2];
+        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
+        files = files.filter(f => f.id !== id);
+        localStorage.setItem('offline_files_data', JSON.stringify(files));
+        return { success: true };
+      }
+
+      // Rename file
+      if (endpoint.includes('/rename') && (method === 'PUT' || method === 'POST')) {
+        const parts = endpoint.split('/');
+        const id = parts[2];
+        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
+        const file = files.find(f => f.id === id);
+        if (file && body.newName) {
+          file.original_name = body.newName;
+          file.name = body.newName;
+          localStorage.setItem('offline_files_data', JSON.stringify(files));
+        }
+        return { success: true };
+      }
+
+      // List files (empty by default for new users)
       if (endpoint.startsWith('/files')) {
         const urlObj = new URL('http://dummy' + endpoint);
         const category = urlObj.searchParams.get('category');
@@ -235,109 +204,55 @@
         }
         if (search) {
           const q = search.toLowerCase();
-          files = files.filter(f => (f.original_name || f.name).toLowerCase().includes(q));
+          files = files.filter(f => (f.original_name || f.name || '').toLowerCase().includes(q));
         }
         return { files };
       }
 
-      // Delete file
-      if (endpoint.startsWith('/files/') && options.method === 'DELETE') {
-        const id = endpoint.split('/')[2];
-        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-        files = files.filter(f => f.id !== id);
-        localStorage.setItem('offline_files_data', JSON.stringify(files));
-        return { success: true };
-      }
-
-      // Rename file
-      if (endpoint.includes('/rename')) {
-        const id = endpoint.split('/')[2];
-        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-        const file = files.find(f => f.id === id);
-        if (file && body.newName) {
-          file.original_name = body.newName;
-          localStorage.setItem('offline_files_data', JSON.stringify(files));
+      // Folders
+      if (endpoint.startsWith('/folders')) {
+        let folders = JSON.parse(localStorage.getItem('offline_folders_data') || '[]');
+        if (method === 'POST') {
+          const newFolder = {
+            id: 'fold_' + Date.now(),
+            name: body.name || 'New Folder',
+            parentId: body.parentId || null,
+            created_at: new Date().toISOString()
+          };
+          folders.push(newFolder);
+          localStorage.setItem('offline_folders_data', JSON.stringify(folders));
+          return { success: true, folder: newFolder };
         }
-        return { success: true, file };
-      }
-
-      // Play position
-      if (endpoint.includes('/play-position')) {
-        const id = endpoint.split('/')[2];
-        if (body.positionSeconds !== undefined) {
-          localStorage.setItem(`pos_${id}`, body.positionSeconds);
+        if (method === 'DELETE') {
+          const id = endpoint.split('/')[2];
+          folders = folders.filter(f => f.id !== id);
+          localStorage.setItem('offline_folders_data', JSON.stringify(folders));
+          return { success: true };
         }
-        return { success: true };
+        return { folders };
       }
 
-      // Devices
-      if (endpoint === '/devices') {
+      // Device discovery & transfers mock fallback
+      if (endpoint === '/devices') return { devices: [] };
+      if (endpoint === '/devices/my-info') {
         return {
-          devices: [
-            {
-              id: 'dev_01',
-              deviceName: 'Bharath-Laptop-B (Dell XPS)',
-              deviceType: 'laptop',
-              ipAddress: '192.168.1.104',
-              port: 3000,
-              isOnline: true,
-              isPaired: true
-            },
-            {
-              id: 'dev_02',
-              deviceName: 'OnePlus 11 5G (Bharath)',
-              deviceType: 'mobile',
-              ipAddress: '192.168.1.108',
-              port: 3000,
-              isOnline: true,
-              isPaired: false
-            },
-            {
-              id: 'dev_03',
-              deviceName: 'Lab-Workstation-07',
-              deviceType: 'desktop',
-              ipAddress: '192.168.1.121',
-              port: 3000,
-              isOnline: true,
-              isPaired: false
-            }
-          ]
+          id: 'dev_local',
+          deviceName: 'Personal Device',
+          deviceType: 'desktop',
+          ipAddress: '127.0.0.1',
+          port: 3000
         };
       }
+      if (endpoint === '/devices/pair') return { success: true, message: 'Paired' };
+      if (endpoint === '/devices/unpair') return { success: true, message: 'Unpaired' };
+      if (endpoint === '/transfers') return { transfers: [] };
+      if (endpoint === '/transfers/start') return { success: true, transferId: 'tr_' + Date.now() };
 
-      if (endpoint === '/devices/pair') {
-        return { success: true, message: 'Paired' };
-      }
-
-      if (endpoint === '/devices/unpair') {
-        return { success: true, message: 'Unpaired' };
-      }
-
-      // Transfers
-      if (endpoint === '/transfers') {
-        return { transfers: [] };
-      }
-
-      if (endpoint === '/transfers/start') {
-        return { success: true, transferId: 'tr_' + Date.now() };
-      }
-
-      // Google drive
-      if (endpoint === '/gdrive/status') {
-        return { isConnected: false, simulatedEmail: null };
-      }
-
-      if (endpoint === '/gdrive/connect') {
-        return { isConnected: true, simulatedEmail: body.simulatedEmail || 'bharath@gmail.com' };
-      }
-
-      if (endpoint === '/gdrive/disconnect') {
-        return { isConnected: false, simulatedEmail: null };
-      }
-
-      if (endpoint.includes('/gdrive/backup')) {
-        return { success: true, message: 'File backed up to Google Drive' };
-      }
+      // Google drive mock fallback
+      if (endpoint === '/gdrive/status') return { isConnected: false, simulatedEmail: null };
+      if (endpoint === '/gdrive/connect') return { isConnected: true, simulatedEmail: body.simulatedEmail || 'user@gmail.com' };
+      if (endpoint === '/gdrive/disconnect') return { isConnected: false, simulatedEmail: null };
+      if (endpoint.includes('/gdrive/backup')) return { success: true, message: 'File queued for backup' };
 
       return { success: true };
     }
@@ -451,22 +366,19 @@
       return this.request('/storage/stats');
     }
 
-    // --- Chunked Large File Uploader (1.5GB to 5GB+ with 0 browser memory freeze) ---
+    // --- Chunked Large File Uploader with fallback to client storage ---
     async uploadFileChunked(file, folderId, onProgress) {
-      if (isStaticPages) {
-        return this.mockStaticUpload(file, folderId, onProgress);
-      }
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+      const totalSize = file.size;
 
       try {
-        const CHUNK_SIZE = 5 * 1024 * 1024;
-        const totalSize = file.size;
-
         const initRes = await this.request('/files/chunk/init', {
           method: 'POST',
           body: {
             fileName: file.name,
             fileSize: totalSize,
-            folderId: folderId || null
+            folderId: folderId || null,
+            mimeType: file.type || 'application/octet-stream'
           }
         });
 
@@ -528,35 +440,40 @@
         this.activeUploads.delete(uploadId);
         return finalRes;
       } catch (err) {
-        console.warn('Real chunk upload failed, falling back to browser storage:', err.message);
         return this.mockStaticUpload(file, folderId, onProgress);
       }
     }
 
     async mockStaticUpload(file, folderId, onProgress) {
       const totalSize = file.size;
-      const steps = 10;
+      const steps = 8;
       for (let i = 1; i <= steps; i++) {
-        await new Promise(r => setTimeout(r, 80));
+        await new Promise(r => setTimeout(r, 60));
         const uploaded = Math.round((totalSize / steps) * i);
         if (onProgress) {
           onProgress({
-            uploadId: 'mock_up_' + Date.now(),
+            uploadId: 'up_' + Date.now(),
             fileName: file.name,
             uploadedBytes: uploaded,
             totalBytes: totalSize,
             percent: Math.round((i / steps) * 100),
-            speedBps: 34 * 1024 * 1024,
+            speedBps: 28 * 1024 * 1024,
             etaSec: Math.max(0, steps - i)
           });
         }
       }
 
       let category = 'others';
-      if (file.type.startsWith('video/')) category = 'movies';
-      else if (file.type.startsWith('audio/')) category = 'audio';
-      else if (file.type.startsWith('image/')) category = 'images';
-      else if (file.type.includes('pdf') || file.type.includes('text') || file.type.includes('document')) category = 'documents';
+      const lower = file.name.toLowerCase();
+      if (file.type.startsWith('video/') || lower.endsWith('.mp4') || lower.endsWith('.mkv') || lower.endsWith('.webm') || lower.endsWith('.avi') || lower.endsWith('.mov')) {
+        category = 'movies';
+      } else if (file.type.startsWith('audio/') || lower.endsWith('.mp3') || lower.endsWith('.wav') || lower.endsWith('.flac') || lower.endsWith('.aac')) {
+        category = 'audio';
+      } else if (file.type.startsWith('image/') || lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.gif')) {
+        category = 'images';
+      } else if (file.type.includes('pdf') || lower.endsWith('.pdf') || lower.endsWith('.docx') || lower.endsWith('.doc') || lower.endsWith('.txt')) {
+        category = 'documents';
+      }
 
       let streamUrl = '';
       try {
@@ -568,9 +485,9 @@
         name: file.name,
         original_name: file.name,
         size_bytes: file.size,
-        category,
+        category: category,
         mime_type: file.type || 'application/octet-stream',
-        streamUrl,
+        streamUrl: streamUrl,
         created_at: new Date().toISOString()
       };
 
@@ -612,22 +529,30 @@
       });
     }
 
-    async startTransfer(fileId, targetDeviceId, targetIp, targetPort) {
+    async getTransfers() {
+      return this.request('/transfers');
+    }
+
+    async startTransfer(targetDeviceId, fileId) {
       return this.request('/transfers/start', {
         method: 'POST',
-        body: { fileId, targetDeviceId, targetIp, targetPort }
+        body: { targetDeviceId, fileId }
       });
     }
 
-    async getTransfers() {
-      return this.request('/transfers');
+    async pauseTransfer(transferId) {
+      return this.request(`/transfers/${transferId}/pause`, { method: 'POST' });
+    }
+
+    async resumeTransfer(transferId) {
+      return this.request(`/transfers/${transferId}/resume`, { method: 'POST' });
     }
 
     async cancelTransfer(transferId) {
       return this.request(`/transfers/${transferId}/cancel`, { method: 'POST' });
     }
 
-    // --- Google Drive Optional Cloud API ---
+    // --- Google Drive Optional Cloud Backup ---
     async getGDriveStatus() {
       return this.request('/gdrive/status');
     }
@@ -645,15 +570,6 @@
 
     async backupFileToGDrive(fileId) {
       return this.request(`/gdrive/backup/${fileId}`, { method: 'POST' });
-    }
-
-    // --- Demo Quick Seed ---
-    async seedDemo() {
-      const res = await this.request('/demo/seed', { method: 'POST' });
-      if (res.token) {
-        this.setAuth(res.token, res.user);
-      }
-      return res;
     }
   }
 
