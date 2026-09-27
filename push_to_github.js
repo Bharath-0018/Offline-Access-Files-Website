@@ -151,6 +151,10 @@ async function main() {
     try {
       const existing = await githubRequest('GET', `/repos/${OWNER}/${REPO_NAME}/contents/${encodeURIComponent(f.relPath)}`, token);
       existingSha = existing.sha;
+      if (existing.content && existing.content.replace(/\s+/g, '') === base64Content) {
+        console.log(`- Up to date: ${f.relPath}`);
+        continue;
+      }
     } catch (e) {}
 
     await githubRequest('PUT', `/repos/${OWNER}/${REPO_NAME}/contents/${encodeURIComponent(f.relPath)}`, token, {
