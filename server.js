@@ -498,78 +498,7 @@ const requestHandler = async (req, res) => {
       }
     }
 
-    // --- Demo Data Generator (Quick Offline Test Data) ---
-    if (pathname === '/api/demo/seed' && method === 'POST') {
-      const demoEmail = 'bharath@example.com';
-      let user = get('SELECT id, email, name, storage_quota_bytes FROM users WHERE email = ?', demoEmail);
-      if (!user) {
-        auth.registerUser({ email: demoEmail, password: 'Password123!', name: 'Bharath' });
-        run('UPDATE users SET is_verified = 1 WHERE email = ?', demoEmail);
-        user = get('SELECT id, email, name, storage_quota_bytes FROM users WHERE email = ?', demoEmail);
-      }
 
-      const sessionToken = auth.createSession(user.id);
-
-      // Create sample video file (generates a valid MP4 / media file for testing player)
-      const userMoviesDir = path.join(auth.STORAGE_ROOT, user.id, 'movies');
-      if (!fs.existsSync(userMoviesDir)) fs.mkdirSync(userMoviesDir, { recursive: true });
-
-      const sampleVideoName = 'Interstellar_Sample_Movie.mp4';
-      const sampleVideoPath = path.join(userMoviesDir, sampleVideoName);
-      
-      // If doesn't exist, create a sample media placeholder
-      if (!fs.existsSync(sampleVideoPath)) {
-        // Minimal MP4 ftyp box header so it recognizes as video
-        const dummyMp4 = Buffer.alloc(1024 * 1024 * 2); // 2MB sample buffer
-        dummyMp4.write('ftypmp42', 4, 'ascii');
-        fs.writeFileSync(sampleVideoPath, dummyMp4);
-      }
-
-      // Check if file is already registered
-      let fileRecord = get('SELECT * FROM files WHERE user_id = ? AND original_name = ?', user.id, sampleVideoName);
-      if (!fileRecord) {
-        fileRecord = storage.saveFileMetadata({
-          userId: user.id,
-          folderId: null,
-          originalName: sampleVideoName,
-          relativePath: path.join('movies', sampleVideoName),
-          sizeBytes: 1610612736, // 1.5 GB representation
-          checksum: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-          mimeType: 'video/mp4',
-          category: 'movies'
-        });
-      }
-
-      // Also create a sample document
-      const userDocsDir = path.join(auth.STORAGE_ROOT, user.id, 'documents');
-      if (!fs.existsSync(userDocsDir)) fs.mkdirSync(userDocsDir, { recursive: true });
-      const sampleDocName = 'Offline_Cloud_Architecture_Specs.pdf';
-      const sampleDocPath = path.join(userDocsDir, sampleDocName);
-      if (!fs.existsSync(sampleDocPath)) {
-        fs.writeFileSync(sampleDocPath, '%PDF-1.4 ... Personal Cloud Technical Design ...');
-      }
-      let docRecord = get('SELECT * FROM files WHERE user_id = ? AND original_name = ?', user.id, sampleDocName);
-      if (!docRecord) {
-        docRecord = storage.saveFileMetadata({
-          userId: user.id,
-          folderId: null,
-          originalName: sampleDocName,
-          relativePath: path.join('documents', sampleDocName),
-          sizeBytes: 4851200, // 4.8 MB
-          checksum: '8f4c2810a9117b3e198754bba82c9e78a42b78912cde45689123456789abcdef',
-          mimeType: 'application/pdf',
-          category: 'documents'
-        });
-      }
-
-      return sendJson(res, 200, {
-        success: true,
-        message: 'Demo account ready!',
-        user,
-        token: sessionToken,
-        files: [fileRecord, docRecord]
-      });
-    }
 
     // -------------------------------------------------------------
     // STATIC FILE SERVING (Single Page App)
