@@ -26,7 +26,7 @@ Type NS:    ns1.afternic.com, ns2.afternic.com
      - `offlineaccess.app`
      - `offlineaccess.io`
      - `offline-access.com`
-     - Free subdomain: `offlineaccess.onrender.com` or `offlineaccess.up.railway.app`
+     - Free Vercel subdomain: `offlineaccess.vercel.app`
 
 ---
 
@@ -34,17 +34,17 @@ Type NS:    ns1.afternic.com, ns2.afternic.com
 
 Once you have control of the domain in your registrar's DNS management console (e.g. Cloudflare, GoDaddy, Namecheap):
 
+### For Vercel Deployment (https://offlineaccess.vercel.app):
+| Record Type | Host / Name | Value / Target | TTL | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **A** | `@` (root) | `76.76.21.21` | Auto | Points apex domain to Vercel |
+| **CNAME** | `www` | `cname.vercel-dns.com` | Auto | Points www subdomain to Vercel |
+
 ### For VPS / Dedicated Cloud Server (DigitalOcean, AWS, Hetzner):
 | Record Type | Host / Name | Value / Target | TTL | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **A** | `@` (root) | `<YOUR_SERVER_PUBLIC_IP>` | 300 / Auto | Directs `OfflineAccess.com` to your server |
 | **A** (or CNAME) | `www` | `<YOUR_SERVER_PUBLIC_IP>` (or `OfflineAccess.com`) | 300 / Auto | Directs `www.OfflineAccess.com` to your server |
-
-### For Managed Cloud PaaS (Render.com / Railway):
-| Record Type | Host / Name | Value / Target | TTL | Purpose |
-| :--- | :--- | :--- | :--- | :--- |
-| **ANAME / ALIAS** | `@` (root) | `offlineaccess.onrender.com` | Auto | Points apex domain |
-| **CNAME** | `www` | `offlineaccess.onrender.com` | Auto | Points www subdomain |
 
 ---
 
@@ -52,8 +52,8 @@ Once you have control of the domain in your registrar's DNS management console (
 
 The application is configured to strictly enforce HTTPS in production (`FORCE_HTTPS=true`).
 
-### Automatic SSL (Render / Railway / Cloudflare)
-- When deploying to Render or using Cloudflare proxy, SSL certificates are issued and renewed **automatically** via Let's Encrypt with zero manual intervention.
+### Automatic SSL (Vercel / Cloudflare)
+- When deploying to Vercel or using Cloudflare proxy, SSL certificates are issued and renewed **automatically** via Let's Encrypt with zero manual intervention.
 
 ### Manual SSL on VPS (Ubuntu / Debian / Nginx)
 Run Certbot to obtain free trusted certificates:
@@ -66,16 +66,19 @@ sudo certbot --nginx -d OfflineAccess.com -d www.OfflineAccess.com --agree-tos -
 
 ## 🚀 4. Deployment Options
 
-### Option A: Render.com (Recommended - 1-Click Zero Maintenance)
+### Option A: Vercel (Recommended - 1-Click Zero Maintenance)
 
-1. Create a free account at [render.com](https://render.com).
-2. Push your project code to a GitHub or GitLab repository.
-3. Click **New +** → **Blueprint** → Select your repository.
-4. Render will automatically detect [`render.yaml`](file:///c:/Users/CSE%20LAB-1/Downloads/Offline%20project/render.yaml) included in this repository.
-5. In **Custom Domains** on Render:
-   - Add `OfflineAccess.com` and `www.OfflineAccess.com`.
-   - Add the DNS records provided by Render to your domain registrar.
-6. Done! Render keeps the app running 24/7 with automatic Let's Encrypt HTTPS and persistent disk storage.
+Target Account: `https://vercel.com/bharathperumal09-7373s-projects`
+Target URL: `https://offlineaccess.vercel.app`
+
+1. Open the 1-Click Vercel Deploy URL:
+   👉 **[https://vercel.com/new/clone?repository-url=https://github.com/Bharath-0018/Velora&project-name=offlineaccess](https://vercel.com/new/clone?repository-url=https://github.com/Bharath-0018/Velora&project-name=offlineaccess)**
+2. Sign in to your Vercel account (`bharathperumal09-7373s-projects`).
+3. Set Project Name: `offlineaccess`.
+4. Click **Deploy**.
+5. Vercel automatically detects [`vercel.json`](file:///c:/Users/CSE%20LAB-1/Downloads/Offline%20project/vercel.json) and builds the site with Serverless Functions (`api/index.js`) and SPA routing!
+6. Your live website is immediately active at:
+   👉 **`https://offlineaccess.vercel.app`**
 
 ---
 
