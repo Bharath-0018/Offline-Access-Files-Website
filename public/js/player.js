@@ -33,6 +33,14 @@
       this.video.addEventListener('ended', () => this._onEnded());
       this.video.addEventListener('play', () => this._updatePlayIcon(true));
       this.video.addEventListener('pause', () => this._updatePlayIcon(false));
+      this.video.addEventListener('error', () => {
+        if (this.isOpen() && this.video.src) {
+          console.warn('Playback error:', this.video.error);
+          if (global.showToast) {
+            global.showToast('Playback error. Ensure video format is supported (MP4 / WebM).', 'error');
+          }
+        }
+      });
 
       // Scrubber click/drag
       this.scrubber.addEventListener('click', (e) => this._onScrub(e));
@@ -94,11 +102,30 @@
       return this.modal && this.modal.classList.contains('open');
     }
 
-    playFile(file) {
+    async playFile(file) {
       this.currentFile = file;
       document.getElementById('player-title').textContent = file.original_name || file.name;
       
-      const streamUrl = `/api/files/stream/${file.id}?token=${global.api.token || ''}`;
+      // 1. Check if we can get a direct local blob from IndexedDB / memory cache
+      let streamUrl = null;
+      if (global.api && global.api.getFileBlobUrl) {
+        try {
+          streamUrl = await global.api.getFileBlobUrl(file.id);
+        } catch (e) {
+          console.warn('Could not retrieve local blob:', e);
+        }
+      }
+
+      // 2. Check if file has active blob URL
+      if (!streamUrl && file.streamUrl && !file.streamUrl.startsWith('/api')) {
+        streamUrl = file.streamUrl;
+      }
+
+      // 3. Fallback to server endpoint
+      if (!streamUrl) {
+        streamUrl = `/api/files/stream/${file.id}?token=${(global.api && global.api.token) || ''}`;
+      }
+
       this.video.src = streamUrl;
       this.video.load();
 
@@ -106,12 +133,11 @@
       const savedSec = file.play_position_seconds || parseFloat(localStorage.getItem(`pos_${file.id}`) || '0');
 
       this.modal.classList.add('open');
-      this.video.play().catch(e => console.log('Autoplay prevented:', e));
+      this.video.play().catch(e => console.log('Autoplay notice:', e));
 
       if (savedSec > 5) {
-        // Show resume notice toast or auto-resume
         const formatted = this._formatTime(savedSec);
-        if (confirm(`Resume "${file.original_name}" from ${formatted}?`)) {
+        if (confirm(`Resume "${file.original_name || file.name}" from ${formatted}?`)) {
           this.video.currentTime = savedSec;
         }
       }
@@ -121,7 +147,9 @@
       this.saveInterval = setInterval(() => {
         if (!this.video.paused && this.video.currentTime > 2) {
           localStorage.setItem(`pos_${this.currentFile.id}`, this.video.currentTime);
-          global.api.savePlayPosition(this.currentFile.id, this.video.currentTime).catch(() => {});
+          if (global.api && global.api.savePlayPosition) {
+            global.api.savePlayPosition(this.currentFile.id, this.video.currentTime).catch(() => {});
+          }
         }
       }, 5000);
     }
