@@ -7,9 +7,19 @@ const REPO_NAME = 'Offline-Access-Files-Website';
 const REPO_DESC = 'An offline-first personal file sharing and storage platform for secure, fast device-to-device file transfer without relying on the internet.';
 const OWNER = 'Bharath-0018';
 
+// Deployment files to clean up and remove from GitHub repository
+const FILES_TO_DELETE = [
+  'vercel.json',
+  'api/index.js',
+  'DEPLOYMENT.md',
+  'Dockerfile',
+  'docker-compose.yml',
+  'nginx.conf'
+];
+
 // Files to include in the repository (exclude heavy binaries & runtime caches)
-const EXCLUDE_DIRS = new Set(['data', '.git', 'node_modules', '.gemini']);
-const EXCLUDE_FILES = new Set(['cloud.db', 'cloud.db-shm', 'cloud.db-wal']);
+const EXCLUDE_DIRS = new Set(['data', '.git', 'node_modules', '.gemini', 'api']);
+const EXCLUDE_FILES = new Set(['cloud.db', 'cloud.db-shm', 'cloud.db-wal', 'vercel.json', 'DEPLOYMENT.md', 'Dockerfile', 'docker-compose.yml', 'nginx.conf']);
 
 function getFilesToUpload(dir, baseDir = '') {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -78,16 +88,16 @@ async function main() {
 
   if (!token) {
     console.log('====================================================================');
-    console.log('🚀 Velora GitHub Auto-Publisher');
+    console.log('🚀 GitHub Clean & Sync Tool');
     console.log('====================================================================');
-    console.log('To upload your project directly to https://github.com/Bharath-0018/Velora:');
+    console.log(`Target: https://github.com/${OWNER}/${REPO_NAME}`);
     console.log('');
     console.log('Run:');
     console.log('  agy-node push_to_github.js <YOUR_GITHUB_PERSONAL_ACCESS_TOKEN>');
     console.log('');
     console.log('To generate a token:');
     console.log('  1. Go to https://github.com/settings/tokens/new');
-    console.log('  2. Select Note: "Velora Deploy", check "repo" scope, and click Generate');
+    console.log('  2. Select Note: "Clean Sync", check "repo" scope, and click Generate');
     console.log('  3. Copy the token and run the command above!');
     console.log('====================================================================');
     process.exit(1);
@@ -96,7 +106,7 @@ async function main() {
   console.log(`\n1. Checking repository https://github.com/${OWNER}/${REPO_NAME}...`);
   try {
     await githubRequest('GET', `/repos/${OWNER}/${REPO_NAME}`, token);
-    console.log(`✓ Repository "${REPO_NAME}" already exists.`);
+    console.log(`✓ Repository "${REPO_NAME}" found.`);
   } catch (err) {
     console.log(`Creating repository "${REPO_NAME}" for ${OWNER}...`);
     await githubRequest('POST', '/user/repos', token, {
@@ -106,16 +116,32 @@ async function main() {
       auto_init: true
     });
     console.log(`✓ Repository "${REPO_NAME}" created successfully!`);
-    // Wait 2 seconds for GitHub branch initialization
     await new Promise(r => setTimeout(r, 2000));
   }
 
-  console.log('\n2. Scanning project files for upload...');
+  console.log('\n2. Cleaning up Vercel/Render deployment files from GitHub repository...');
+  for (const delFile of FILES_TO_DELETE) {
+    try {
+      const existing = await githubRequest('GET', `/repos/${OWNER}/${REPO_NAME}/contents/${encodeURIComponent(delFile)}`, token);
+      if (existing && existing.sha) {
+        await githubRequest('DELETE', `/repos/${OWNER}/${REPO_NAME}/contents/${encodeURIComponent(delFile)}`, token, {
+          message: `Delete ${delFile} (clean repository)`,
+          sha: existing.sha,
+          branch: 'main'
+        });
+        console.log(`✓ Deleted ${delFile} from GitHub repository.`);
+      }
+    } catch (e) {
+      // File does not exist on remote, nothing to delete
+    }
+  }
+
+  console.log('\n3. Scanning clean project files for upload...');
   const projectDir = __dirname;
   const files = getFilesToUpload(projectDir);
-  console.log(`Found ${files.length} project files to upload.`);
+  console.log(`Found ${files.length} clean project files to upload.`);
 
-  console.log('\n3. Uploading files to GitHub...');
+  console.log('\n4. Syncing clean files to GitHub...');
   for (const f of files) {
     const content = fs.readFileSync(f.fullPath);
     const base64Content = content.toString('base64');
@@ -128,18 +154,19 @@ async function main() {
     } catch (e) {}
 
     await githubRequest('PUT', `/repos/${OWNER}/${REPO_NAME}/contents/${encodeURIComponent(f.relPath)}`, token, {
-      message: `Add ${f.relPath}`,
+      message: `Sync ${f.relPath}`,
       content: base64Content,
       branch: 'main',
       ...(existingSha ? { sha: existingSha } : {})
     });
 
-    console.log(`✓ Uploaded ${f.relPath}`);
+    console.log(`✓ Synced ${f.relPath}`);
   }
 
   console.log('\n====================================================================');
-  console.log('🎉 SUCCESS! Velora is now published on GitHub:');
+  console.log('🎉 SUCCESS! Clean project repository updated on GitHub:');
   console.log(`🔗 https://github.com/${OWNER}/${REPO_NAME}`);
+  console.log('All Vercel & Render deployment files removed.');
   console.log('====================================================================\n');
 }
 
