@@ -86,7 +86,7 @@ const MIME_TYPES = {
   '.mp3': 'audio/mpeg'
 };
 
-const server = http.createServer(async (req, res) => {
+const requestHandler = async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const pathname = parsedUrl.pathname;
   const method = req.method;
@@ -612,7 +612,9 @@ const server = http.createServer(async (req, res) => {
     console.error('Server error:', error);
     sendJson(res, 500, { error: error.message || 'Internal server error' });
   }
-});
+};
+
+const server = http.createServer(requestHandler);
 
 // Attach WebSocket Upgrade Handler
 server.on('upgrade', (req, socket, head) => {
@@ -624,26 +626,33 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// Start Discovery and Server
-discovery.start();
+// Start Discovery and Server (when executed directly, e.g. local mode or Docker)
+if (require.main === module) {
+  discovery.start();
 
-server.listen(PORT, '0.0.0.0', () => {
-  const primaryIp = discovery.getPrimaryIp();
-  console.log('================================================================');
-  console.log('🚀 Velora - Offline Personal Cloud & Local File Sharing');
-  console.log('================================================================');
-  console.log(`🌐 Local Web Portal:      http://localhost:${PORT}`);
-  console.log(`📶 LAN Access URL:         http://${primaryIp}:${PORT}`);
-  console.log(`📡 Device Discovery:       UDP Port 41234 (Active)`);
-  console.log(`🔌 WebSocket Signaling:    ws://${primaryIp}:${PORT}/ws`);
-  console.log('🔒 Zero-Internet Engine:   ACTIVE & READY');
-  console.log('================================================================');
-});
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  discovery.stop();
-  server.close(() => {
-    process.exit(0);
+  server.listen(PORT, '0.0.0.0', () => {
+    const primaryIp = discovery.getPrimaryIp();
+    console.log('================================================================');
+    console.log('🚀 OfflineAccess - Offline Personal Cloud & Local File Sharing');
+    console.log('================================================================');
+    console.log(`🌐 Local Web Portal:      http://localhost:${PORT}`);
+    console.log(`📶 LAN Access URL:         http://${primaryIp}:${PORT}`);
+    console.log(`📡 Device Discovery:       UDP Port 41234 (Active)`);
+    console.log(`🔌 WebSocket Signaling:    ws://${primaryIp}:${PORT}/ws`);
+    console.log('🔒 Zero-Internet Engine:   ACTIVE & READY');
+    console.log('================================================================');
   });
-});
+
+  // Handle graceful shutdown
+  process.on('SIGINT', () => {
+    discovery.stop();
+    server.close(() => {
+      process.exit(0);
+    });
+  });
+}
+
+module.exports = {
+  server,
+  requestHandler
+};
