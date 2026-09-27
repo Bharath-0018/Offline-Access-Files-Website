@@ -98,7 +98,7 @@
       this.currentFile = file;
       document.getElementById('player-title').textContent = file.original_name || file.name;
       
-      const streamUrl = file.streamUrl || `/api/files/stream/${file.id}?token=${global.api.token || ''}`;
+      const streamUrl = `/api/files/stream/${file.id}?token=${global.api.token || ''}`;
       this.video.src = streamUrl;
       this.video.load();
 
