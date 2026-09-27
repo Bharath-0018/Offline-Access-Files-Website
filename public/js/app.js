@@ -826,7 +826,7 @@
             <div class="brand-icon-wrapper" style="margin: 0 auto 12px; width:52px; height:52px;">
               ${Icons.render('cloud', 28)}
             </div>
-            <h2 style="font-size:1.45rem; font-weight:700;">Velora Offline Cloud</h2>
+            <h2 style="font-size:1.45rem; font-weight:700;">OfflineAccess</h2>
             <p style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Personal media & file sharing without the internet</p>
           </div>
 
