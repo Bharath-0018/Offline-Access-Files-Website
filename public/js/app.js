@@ -858,28 +858,20 @@
           <form id="form-signup" style="display:none;" onsubmit="window.handleSignup(event)">
             <div class="form-group">
               <label>Full Name</label>
-              <input type="text" id="signup-name" class="form-input" placeholder="Bharath Kumar" required>
+              <input type="text" id="signup-name" class="form-input" placeholder="Your Name" required>
             </div>
             <div class="form-group">
               <label>Email Address</label>
-              <input type="email" id="signup-email" class="form-input" placeholder="bharath@example.com" required>
+              <input type="email" id="signup-email" class="form-input" placeholder="user@example.com" required>
             </div>
             <div class="form-group">
               <label>Password (Min 8 chars)</label>
               <input type="password" id="signup-password" class="form-input" placeholder="••••••••" minlength="6" required>
             </div>
             <button type="submit" class="btn-primary" style="width:100%; justify-content:center; padding:11px; margin-top:8px;">
-              Create Offline Account
+              Create Personal Cloud Account
             </button>
           </form>
-
-          <!-- 1-Click Offline Demo Account Loader -->
-          <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border-subtle); text-align:center;">
-            <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:10px;">Quick Offline Testing & Demonstration:</p>
-            <button class="btn-secondary" style="width:100%; justify-content:center;" onclick="window.seedDemoAccount()">
-              ${Icons.render('shield-check')} 1-Click Demo Login (Bharath + 1.5 GB Movie)
-            </button>
-          </div>
         </div>
       </div>
     `;
@@ -990,18 +982,6 @@
     }
   };
 
-  global.seedDemoAccount = async function () {
-    try {
-      const res = await api.seedDemo();
-      state.user = res.user;
-      showToast('Logged in as Bharath with 1.5 GB test movie!', 'success');
-      updateUserHeader();
-      navigateTo('dashboard');
-    } catch (e) {
-      showToast('Demo seed failed: ' + e.message, 'error');
-    }
-  };
-
   global.logout = async function () {
     await api.logout();
     state.user = null;
@@ -1050,7 +1030,14 @@
 
         closeUploadProgressModal();
         showToast(`Uploaded "${file.name}" successfully!`, 'success');
-        loadFiles();
+        if (state.currentView === 'dashboard') {
+          loadDashboardRecentFiles();
+        } else if (state.currentView === 'offline') {
+          const c = document.getElementById('view-content');
+          if (c) renderOfflineMoviesView(c);
+        } else {
+          loadFiles();
+        }
         loadStorageStats();
       } catch (err) {
         closeUploadProgressModal();
@@ -1083,7 +1070,12 @@
   global.downloadFile = function (fileId) {
     const file = state.files.find(f => f.id === fileId);
     if (file && file.streamUrl) {
-      window.open(file.streamUrl, '_blank');
+      const a = document.createElement('a');
+      a.href = file.streamUrl;
+      a.download = file.original_name || file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
       return;
     }
     window.open(`/api/files/download/${fileId}?token=${api.token || ''}`, '_blank');
@@ -1096,18 +1088,37 @@
     try {
       await api.renameFile(fileId, newName.trim());
       showToast('File renamed.', 'success');
-      loadFiles();
+      if (state.currentView === 'dashboard') {
+        loadDashboardRecentFiles();
+      } else if (state.currentView === 'offline') {
+        const c = document.getElementById('view-content');
+        if (c) renderOfflineMoviesView(c);
+      } else {
+        loadFiles();
+      }
     } catch (e) {
       showToast(e.message, 'error');
     }
   };
 
   global.deleteFilePrompt = async function (fileId) {
-    if (!confirm('Are you sure you want to delete this file from local storage?')) return;
+    if (!confirm('Are you sure you want to delete this file?')) return;
     try {
+      // Instantly remove card from DOM
+      const card = document.getElementById(`file-${fileId}`);
+      if (card) card.remove();
+
       await api.deleteFile(fileId);
-      showToast('File deleted.', 'success');
-      loadFiles();
+      showToast('File deleted successfully.', 'success');
+
+      if (state.currentView === 'dashboard') {
+        loadDashboardRecentFiles();
+      } else if (state.currentView === 'offline') {
+        const c = document.getElementById('view-content');
+        if (c) renderOfflineMoviesView(c);
+      } else {
+        loadFiles();
+      }
       loadStorageStats();
     } catch (e) {
       showToast(e.message, 'error');
