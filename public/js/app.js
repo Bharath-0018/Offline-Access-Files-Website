@@ -1106,6 +1106,11 @@
       return;
     }
 
+    if (window.location.hostname.includes('vercel.app') || !api.token) {
+      showToast('File stored in browser memory.', 'info');
+      return;
+    }
+
     window.open(`/api/files/download/${fileId}?token=${api.token || ''}`, '_blank');
   };
 
