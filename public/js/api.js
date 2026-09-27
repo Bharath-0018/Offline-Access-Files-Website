@@ -2,11 +2,79 @@
 (function (global) {
   const API_BASE = '/api';
 
-  class ApiService {
-    constructor() {
-      this.token = localStorage.getItem('cloud_token') || null;
-      this.user = JSON.parse(localStorage.getItem('cloud_user') || 'null');
-      this.activeUploads = new Map();
+// IndexedDB Helper for Storing Large Media Blobs in Browser
+const IDB_NAME = 'OfflineAccessStaticDB';
+const IDB_STORE = 'user_blobs';
+
+function openIDB() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('IndexedDB not supported'));
+    const req = window.indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbPutBlob(id, blob) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.put(blob, id);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn('IDB put error:', e);
+    return false;
+  }
+}
+
+async function idbGetBlob(id) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn('IDB get error:', e);
+    return null;
+  }
+}
+
+async function idbDeleteBlob(id) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.delete(id);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn('IDB delete error:', e);
+    return false;
+  }
+}
+
+class ApiService {
+  constructor() {
+    this.token = localStorage.getItem('cloud_token') || null;
+    this.user = JSON.parse(localStorage.getItem('cloud_user') || 'null');
+    this.activeUploads = new Map();
+    this.fileBlobCache = new Map();
 
       // Ensure storage is initialized cleanly with NO dummy/demo files
       try {
@@ -352,7 +420,27 @@
     }
 
     async deleteFile(fileId) {
+      this.fileBlobCache.delete(fileId);
+      await idbDeleteBlob(fileId);
       return this.request(`/files/${fileId}`, { method: 'DELETE' });
+    }
+
+    async getFileBlobUrl(fileId) {
+      if (this.fileBlobCache.has(fileId)) {
+        const cached = this.fileBlobCache.get(fileId);
+        try {
+          return URL.createObjectURL(cached);
+        } catch (e) {}
+      }
+
+      const blob = await idbGetBlob(fileId);
+      if (blob) {
+        this.fileBlobCache.set(fileId, blob);
+        try {
+          return URL.createObjectURL(blob);
+        } catch (e) {}
+      }
+      return null;
     }
 
     async savePlayPosition(fileId, positionSeconds) {
@@ -490,6 +578,10 @@
         streamUrl: streamUrl,
         created_at: new Date().toISOString()
       };
+
+      // Store in active cache & IndexedDB for persistent video streaming and downloading
+      this.fileBlobCache.set(newFile.id, file);
+      await idbPutBlob(newFile.id, file);
 
       const files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
       files.unshift(newFile);
