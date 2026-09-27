@@ -1081,6 +1081,11 @@
   };
 
   global.downloadFile = function (fileId) {
+    const file = state.files.find(f => f.id === fileId);
+    if (file && file.streamUrl) {
+      window.open(file.streamUrl, '_blank');
+      return;
+    }
     window.open(`/api/files/download/${fileId}?token=${api.token || ''}`, '_blank');
   };
 
