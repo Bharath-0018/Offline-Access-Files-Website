@@ -1,11 +1,15 @@
-// public/js/player.js - VLC-Style Cinema Movie & Video Player
+// public/js/player.js - VLC-Style Cinema Movie & Video Player with In-Browser Universal Engine
 (function (global) {
   class VideoPlayerController {
     constructor() {
       this.currentFile = null;
+      this.currentStreamUrl = null;
       this.modal = null;
       this.container = null;
+      this.screen = null;
       this.video = null;
+      this.movi = null;
+      this.activeMedia = null;
       this.scrubber = null;
       this.scrubberFill = null;
       this.timeDisplay = null;
@@ -19,13 +23,14 @@
       this.aspectIndex = 0; // 0: contain, 1: cover, 2: fill
       this.aspectModes = ['vlc-fit-contain', 'vlc-fit-cover', 'vlc-fit-fill'];
       this.aspectLabels = ['Fit: 16:9', 'Fit: Zoom', 'Fit: Stretch'];
-      this.mkvRetryAttempted = false;
     }
 
     init() {
       this.modal = document.getElementById('video-modal');
       this.container = document.getElementById('player-container');
+      this.screen = document.getElementById('vlc-screen');
       this.video = document.getElementById('player-video');
+      this.movi = document.getElementById('player-movi');
       this.scrubber = document.getElementById('player-scrubber');
       this.scrubberFill = document.getElementById('player-scrubber-fill');
       this.timeDisplay = document.getElementById('player-time');
@@ -33,16 +38,21 @@
       this.volumeSlider = document.getElementById('player-volume');
       this.speedSelect = document.getElementById('player-speed');
 
+      this.activeMedia = this.video;
+
       if (!this.video) return;
 
-      // Video playback event listeners
-      this.video.addEventListener('timeupdate', () => this._onTimeUpdate());
-      this.video.addEventListener('loadedmetadata', () => this._onMetaLoaded());
-      this.video.addEventListener('ended', () => this._onEnded());
-      this.video.addEventListener('play', () => this._updatePlayIcon(true));
-      this.video.addEventListener('pause', () => this._updatePlayIcon(false));
+      // Attach media playback listeners to both native video and enhanced movi element
+      [this.video, this.movi].forEach(media => {
+        if (!media) return;
+        media.addEventListener('timeupdate', () => this._onTimeUpdate());
+        media.addEventListener('loadedmetadata', () => this._onMetaLoaded());
+        media.addEventListener('ended', () => this._onEnded());
+        media.addEventListener('play', () => this._updatePlayIcon(true));
+        media.addEventListener('pause', () => this._updatePlayIcon(false));
+      });
 
-      // Error handler with automatic MKV compatibility fallback
+      // Error handler: If native video cannot parse the container (e.g. MKV), auto-switch to enhanced player
       this.video.addEventListener('error', (e) => this._onPlaybackError(e));
 
       // Scrubber seek
@@ -60,8 +70,9 @@
       // Playback speed
       if (this.speedSelect) {
         this.speedSelect.addEventListener('change', (e) => {
-          this.video.playbackRate = parseFloat(e.target.value);
-          this._showOsd(`Speed: ${e.target.value}x`);
+          const rate = parseFloat(e.target.value);
+          if (this.activeMedia) this.activeMedia.playbackRate = rate;
+          this._showOsd(`Speed: ${rate}x`);
         });
       }
 
@@ -71,10 +82,11 @@
         subInput.addEventListener('change', (e) => this._loadSubtitleFile(e));
       }
 
-      // Video screen click & double-click interactions (VLC Behavior)
-      if (this.video) {
-        this.video.addEventListener('click', (e) => {
-          // Debounce click to allow double click
+      // Screen click & double-click interactions (VLC Behavior on screen container)
+      const clickTarget = this.screen || this.video;
+      if (clickTarget) {
+        clickTarget.addEventListener('click', (e) => {
+          if (e.target && e.target.closest('#player-controls, #player-header')) return;
           if (this.clickTimeout) {
             clearTimeout(this.clickTimeout);
             this.clickTimeout = null;
@@ -88,12 +100,13 @@
         });
 
         // Mouse wheel scroll to adjust volume (VLC Feature)
-        this.video.addEventListener('wheel', (e) => {
+        clickTarget.addEventListener('wheel', (e) => {
           e.preventDefault();
+          const currentVol = (this.activeMedia && this.activeMedia.volume !== undefined) ? this.activeMedia.volume : 1;
           if (e.deltaY < 0) {
-            this.setVolume(Math.min(1, this.video.volume + 0.05));
+            this.setVolume(Math.min(1, currentVol + 0.05));
           } else {
-            this.setVolume(Math.max(0, this.video.volume - 0.05));
+            this.setVolume(Math.max(0, currentVol - 0.05));
           }
         }, { passive: false });
       }
@@ -103,9 +116,10 @@
         const resetIdle = () => {
           this.container.classList.remove('vlc-idle');
           if (this.idleTimeout) clearTimeout(this.idleTimeout);
-          if (!this.video.paused) {
+          const isPlaying = this.activeMedia && !this.activeMedia.paused;
+          if (isPlaying) {
             this.idleTimeout = setTimeout(() => {
-              if (this.isOpen() && !this.video.paused) {
+              if (this.isOpen() && this.activeMedia && !this.activeMedia.paused) {
                 this.container.classList.add('vlc-idle');
               }
             }, 2500);
@@ -142,10 +156,12 @@
           this.seekRelative(-10);
         } else if (e.code === 'ArrowUp') {
           e.preventDefault();
-          this.setVolume(Math.min(1, this.video.volume + 0.1));
+          const currentVol = (this.activeMedia && this.activeMedia.volume !== undefined) ? this.activeMedia.volume : 1;
+          this.setVolume(Math.min(1, currentVol + 0.1));
         } else if (e.code === 'ArrowDown') {
           e.preventDefault();
-          this.setVolume(Math.max(0, this.video.volume - 0.1));
+          const currentVol = (this.activeMedia && this.activeMedia.volume !== undefined) ? this.activeMedia.volume : 1;
+          this.setVolume(Math.max(0, currentVol - 0.1));
         } else if (e.key === 'f' || e.key === 'F') {
           e.preventDefault();
           this.toggleFullscreen();
@@ -157,7 +173,7 @@
           this.cycleAspectRatio();
         } else if (e.key === 'Escape') {
           if (document.fullscreenElement) {
-            document.exitFullscreen();
+            document.exitFullscreen().catch(() => {});
           } else {
             this.close();
           }
@@ -171,20 +187,16 @@
 
     async playFile(file) {
       this.currentFile = file;
-      this.mkvRetryAttempted = false;
       const titleEl = document.getElementById('player-title');
       if (titleEl) titleEl.textContent = file.original_name || file.name;
 
-      // Hide any previous codec error notices
-      const helper = document.getElementById('vlc-mkv-helper');
-      if (helper) helper.style.display = 'none';
+      const isMkv = ((file.original_name || file.name || '').toLowerCase().endsWith('.mkv'));
 
-      // 1. Try to get direct stream blob URL
+      // 1. Try to get direct stream blob URL from local storage or cache
       let streamUrl = null;
       if (global.api && global.api.getFileBlobUrl) {
         try {
-          const isMkv = (file.name || file.original_name || '').toLowerCase().endsWith('.mkv');
-          streamUrl = await global.api.getFileBlobUrl(file.id, isMkv ? 'video/webm' : null);
+          streamUrl = await global.api.getFileBlobUrl(file.id);
         } catch (e) {
           console.warn('Could not retrieve local blob:', e);
         }
@@ -195,102 +207,90 @@
         streamUrl = file.streamUrl;
       }
 
-      // 3. Fallback to server endpoint (for local server mode)
-      if (!streamUrl) {
+      // 3. Fallback to server endpoint (for local server mode only)
+      if (!streamUrl && !window.location.hostname.includes('vercel.app')) {
         streamUrl = `/api/files/stream/${file.id}?token=${(global.api && global.api.token) || ''}`;
       }
 
-      this.video.src = streamUrl;
-      this.video.load();
+      this.currentStreamUrl = streamUrl;
 
-      // Check last position
-      const savedSec = file.play_position_seconds || parseFloat(localStorage.getItem(`pos_${file.id}`) || '0');
+      // Check if custom elements have registered <movi-player>
+      const hasMoviCustomElement = window.customElements && customElements.get('movi-player');
+
+      if (isMkv && hasMoviCustomElement && this.movi) {
+        this._useMoviPlayer(streamUrl);
+      } else {
+        this._useNativeVideo(streamUrl);
+      }
 
       this.modal.classList.add('open');
-      this.video.play().catch(e => console.log('Autoplay notice:', e));
+
+      // Check last playback position
+      const savedSec = file.play_position_seconds || parseFloat(localStorage.getItem(`pos_${file.id}`) || '0');
+      if (this.activeMedia && this.activeMedia.play) {
+        this.activeMedia.play().catch(e => console.log('Autoplay notice:', e));
+      }
 
       if (savedSec > 5) {
         const formatted = this._formatTime(savedSec);
         if (confirm(`Resume "${file.original_name || file.name}" from ${formatted}?`)) {
-          this.video.currentTime = savedSec;
+          if (this.activeMedia) this.activeMedia.currentTime = savedSec;
         }
       }
 
-      // Start periodic position persistence
+      // Periodic position persistence
       if (this.saveInterval) clearInterval(this.saveInterval);
       this.saveInterval = setInterval(() => {
-        if (!this.video.paused && this.video.currentTime > 2) {
-          localStorage.setItem(`pos_${this.currentFile.id}`, this.video.currentTime);
+        if (this.activeMedia && !this.activeMedia.paused && this.activeMedia.currentTime > 2) {
+          localStorage.setItem(`pos_${this.currentFile.id}`, this.activeMedia.currentTime);
           if (global.api && global.api.savePlayPosition) {
-            global.api.savePlayPosition(this.currentFile.id, this.video.currentTime).catch(() => {});
+            global.api.savePlayPosition(this.currentFile.id, this.activeMedia.currentTime).catch(() => {});
           }
         }
       }, 5000);
     }
 
+    _useNativeVideo(streamUrl) {
+      if (this.movi) {
+        this.movi.style.display = 'none';
+        if (this.movi.pause) this.movi.pause();
+      }
+      this.video.style.display = 'block';
+      this.activeMedia = this.video;
+      this.video.src = streamUrl;
+      this.video.load();
+    }
+
+    _useMoviPlayer(streamUrl) {
+      this.video.style.display = 'none';
+      this.video.pause();
+      if (this.movi) {
+        this.movi.style.display = 'block';
+        this.activeMedia = this.movi;
+        this.movi.src = streamUrl;
+        if (this.movi.load) this.movi.load();
+        if (this.movi.play) this.movi.play().catch(e => console.log('Movi play:', e));
+        this._showOsd('Universal Cinema Engine Active');
+      }
+    }
+
     _onPlaybackError(e) {
-      if (!this.isOpen() || !this.video.src) return;
-      const isMkv = this.currentFile && (this.currentFile.name || '').toLowerCase().endsWith('.mkv');
+      if (!this.isOpen() || !this.currentStreamUrl) return;
+      console.warn('Native video playback encountered format limitation. Switching to Universal Engine...');
 
-      console.warn('Video playback error detected:', this.video.error);
-
-      // Automatic MKV retry with WebM/MP4 container fallback
-      if (isMkv && !this.mkvRetryAttempted) {
-        this.mkvRetryAttempted = true;
-        this.retryCompatibilityMode();
-        return;
+      // Seamlessly switch to MoviPlayer WebCodecs engine
+      if (this.movi) {
+        this._useMoviPlayer(this.currentStreamUrl);
       }
-
-      // If still failing on an MKV or video, show the VLC Player download option
-      const helper = document.getElementById('vlc-mkv-helper');
-      if (helper) {
-        helper.style.display = 'block';
-      } else if (global.showToast) {
-        global.showToast('Browser cannot decode this video codec. Use "Open in VLC Player".', 'error');
-      }
-    }
-
-    async retryCompatibilityMode() {
-      if (!this.currentFile) return;
-      const helper = document.getElementById('vlc-mkv-helper');
-      if (helper) helper.style.display = 'none';
-
-      try {
-        let streamUrl = null;
-        if (global.api && global.api.getFileBlobUrl) {
-          streamUrl = await global.api.getFileBlobUrl(this.currentFile.id, 'video/mp4');
-          if (!streamUrl) {
-            streamUrl = await global.api.getFileBlobUrl(this.currentFile.id, 'video/webm');
-          }
-        }
-        if (streamUrl) {
-          this.video.src = streamUrl;
-          this.video.load();
-          await this.video.play();
-          this._showOsd('Compatibility Mode Active');
-          return;
-        }
-      } catch (err) {
-        console.warn('Retry compatibility mode failed:', err);
-      }
-      if (helper) helper.style.display = 'block';
-    }
-
-    downloadForVlc() {
-      if (!this.currentFile) return;
-      if (global.downloadFile) {
-        global.downloadFile(this.currentFile.id);
-      }
-      this._showOsd('Downloading for VLC...');
     }
 
     togglePlay() {
-      if (!this.video) return;
-      if (this.video.paused) {
-        this.video.play().catch(() => {});
+      if (!this.activeMedia) return;
+      if (this.activeMedia.paused) {
+        this.activeMedia.play().catch(() => {});
         this._flashCenterIndicator(true);
       } else {
-        this.video.pause();
+        this.activeMedia.pause();
         this._flashCenterIndicator(false);
       }
     }
@@ -305,7 +305,7 @@
         : `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`;
 
       indicator.classList.remove('show');
-      void indicator.offsetWidth; // Trigger reflow
+      void indicator.offsetWidth;
       indicator.classList.add('show');
       setTimeout(() => indicator.classList.remove('show'), 400);
     }
@@ -320,35 +320,40 @@
     }
 
     seekRelative(sec) {
-      if (!this.video || !this.video.duration) return;
-      const target = Math.max(0, Math.min(this.video.duration, this.video.currentTime + sec));
-      this.video.currentTime = target;
+      if (!this.activeMedia || !this.activeMedia.duration) return;
+      const target = Math.max(0, Math.min(this.activeMedia.duration, this.activeMedia.currentTime + sec));
+      this.activeMedia.currentTime = target;
       const sign = sec > 0 ? '+' : '';
       this._showOsd(`${sign}${sec}s (${this._formatTime(target)})`);
     }
 
     setVolume(vol) {
-      if (!this.video) return;
       const clamped = Math.max(0, Math.min(1, vol));
-      this.video.volume = clamped;
+      if (this.video) this.video.volume = clamped;
+      if (this.movi) this.movi.volume = clamped;
       if (this.volumeSlider) this.volumeSlider.value = clamped;
       const percent = Math.round(clamped * 100);
       this._showOsd(`🔊 Volume: ${percent}%`);
     }
 
     toggleMute() {
-      if (!this.video) return;
-      this.video.muted = !this.video.muted;
-      this._showOsd(this.video.muted ? '🔇 Muted' : `🔊 Volume: ${Math.round(this.video.volume * 100)}%`);
+      if (!this.activeMedia) return;
+      const newMuted = !this.activeMedia.muted;
+      if (this.video) this.video.muted = newMuted;
+      if (this.movi) this.movi.muted = newMuted;
+      this._showOsd(newMuted ? '🔇 Muted' : `🔊 Volume: ${Math.round((this.activeMedia.volume || 1) * 100)}%`);
     }
 
     cycleAspectRatio() {
-      if (!this.video) return;
       this.aspectIndex = (this.aspectIndex + 1) % this.aspectModes.length;
-      this.aspectModes.forEach(cls => this.video.classList.remove(cls));
+      const targetElem = (this.activeMedia === this.movi) ? this.movi : this.video;
+      this.aspectModes.forEach(cls => {
+        if (this.video) this.video.classList.remove(cls);
+        if (this.movi) this.movi.classList.remove(cls);
+      });
       const newClass = this.aspectModes[this.aspectIndex];
       const newLabel = this.aspectLabels[this.aspectIndex];
-      this.video.classList.add(newClass);
+      if (targetElem) targetElem.classList.add(newClass);
 
       const btn = document.getElementById('player-aspect-btn');
       if (btn) btn.textContent = newLabel;
@@ -360,7 +365,7 @@
       try {
         if (document.pictureInPictureElement) {
           await document.exitPictureInPicture();
-        } else if (document.pictureInPictureEnabled) {
+        } else if (document.pictureInPictureEnabled && this.video.style.display !== 'none') {
           await this.video.requestPictureInPicture();
           this._showOsd('Picture-in-Picture');
         }
@@ -381,7 +386,7 @@
         }
       } else {
         if (document.exitFullscreen) {
-          document.exitFullscreen();
+          document.exitFullscreen().catch(() => {});
         }
       }
     }
@@ -394,19 +399,19 @@
     }
 
     _onTimeUpdate() {
-      if (!this.video || !this.video.duration) return;
-      const percent = (this.video.currentTime / this.video.duration) * 100;
+      if (!this.activeMedia || !this.activeMedia.duration) return;
+      const percent = (this.activeMedia.currentTime / this.activeMedia.duration) * 100;
       if (this.scrubberFill) {
         this.scrubberFill.style.width = `${percent}%`;
       }
       if (this.timeDisplay) {
-        this.timeDisplay.textContent = `${this._formatTime(this.video.currentTime)} / ${this._formatTime(this.video.duration)}`;
+        this.timeDisplay.textContent = `${this._formatTime(this.activeMedia.currentTime)} / ${this._formatTime(this.activeMedia.duration)}`;
       }
     }
 
     _onMetaLoaded() {
-      if (this.timeDisplay && this.video) {
-        this.timeDisplay.textContent = `00:00 / ${this._formatTime(this.video.duration)}`;
+      if (this.timeDisplay && this.activeMedia && this.activeMedia.duration) {
+        this.timeDisplay.textContent = `00:00 / ${this._formatTime(this.activeMedia.duration)}`;
       }
     }
 
@@ -421,12 +426,12 @@
     }
 
     _onScrub(e) {
-      if (!this.scrubber || !this.video || !this.video.duration) return;
+      if (!this.scrubber || !this.activeMedia || !this.activeMedia.duration) return;
       const rect = this.scrubber.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const width = rect.width;
       const percentage = Math.max(0, Math.min(1, clickX / width));
-      this.video.currentTime = percentage * this.video.duration;
+      this.activeMedia.currentTime = percentage * this.activeMedia.duration;
     }
 
     _loadSubtitleFile(e) {
@@ -442,17 +447,19 @@
         const blob = new Blob([vttText], { type: 'text/vtt' });
         const trackUrl = URL.createObjectURL(blob);
 
-        const oldTracks = this.video.querySelectorAll('track');
-        oldTracks.forEach(t => t.remove());
+        if (this.video) {
+          const oldTracks = this.video.querySelectorAll('track');
+          oldTracks.forEach(t => t.remove());
 
-        const track = document.createElement('track');
-        track.kind = 'subtitles';
-        track.label = file.name;
-        track.srclang = 'en';
-        track.src = trackUrl;
-        track.default = true;
-        this.video.appendChild(track);
-        track.mode = 'showing';
+          const track = document.createElement('track');
+          track.kind = 'subtitles';
+          track.label = file.name;
+          track.srclang = 'en';
+          track.src = trackUrl;
+          track.default = true;
+          this.video.appendChild(track);
+          track.mode = 'showing';
+        }
         if (global.showToast) global.showToast('Subtitles loaded: ' + file.name, 'success');
       };
       reader.readAsText(file);
@@ -478,20 +485,26 @@
       }
       if (this.video) {
         this.video.pause();
-        if (this.currentFile && this.video.currentTime > 2) {
-          localStorage.setItem(`pos_${this.currentFile.id}`, this.video.currentTime);
-          if (global.api && global.api.savePlayPosition) {
-            global.api.savePlayPosition(this.currentFile.id, this.video.currentTime).catch(() => {});
-          }
-        }
         this.video.removeAttribute('src');
         this.video.load();
+      }
+      if (this.movi) {
+        if (this.movi.pause) this.movi.pause();
+        this.movi.removeAttribute('src');
+        this.movi.style.display = 'none';
+      }
+      if (this.currentFile && this.activeMedia && this.activeMedia.currentTime > 2) {
+        localStorage.setItem(`pos_${this.currentFile.id}`, this.activeMedia.currentTime);
+        if (global.api && global.api.savePlayPosition) {
+          global.api.savePlayPosition(this.currentFile.id, this.activeMedia.currentTime).catch(() => {});
+        }
       }
       if (this.saveInterval) clearInterval(this.saveInterval);
       if (this.idleTimeout) clearTimeout(this.idleTimeout);
       if (this.modal) this.modal.classList.remove('open');
       if (this.container) this.container.classList.remove('vlc-idle');
       this.currentFile = null;
+      this.currentStreamUrl = null;
     }
   }
 
