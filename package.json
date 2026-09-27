@@ -1,5 +1,5 @@
 {
-  "name": "velora",
+  "name": "offlineaccess",
   "version": "1.0.0",
   "description": "An offline-first personal file sharing and storage platform for secure, fast device-to-device file transfer without relying on the internet.",
   "main": "server.js",
@@ -12,7 +12,7 @@
     "url": "https://github.com/Bharath-0018/Velora.git"
   },
   "keywords": [
-    "velora",
+    "offlineaccess",
     "offline-cloud",
     "p2p-file-transfer",
     "local-network",
