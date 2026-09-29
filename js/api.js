@@ -1,4 +1,4 @@
-// public/js/api.js - Velora Cloud API Client & Chunked Resumable Large File Uploader
+// public/js/api.js - Velora Cloud API Client with Global Real-Time Multi-Device Peer Sync
 (function (global) {
   // Lightweight IndexedDB helper for Offline Browser Fallback Mode
   const IDB_NAME = 'velora_offline_blobs';
@@ -61,6 +61,110 @@
     } catch (e) {}
   }
 
+  // --- High-Availability Global Multi-Device Cloud Registry ---
+  const VELORA_CLOUD_DB_ID = 'ff808181a09d98f701a0ec7c45bb3e14';
+  const VELORA_CLOUD_DB_URL = 'https://api.restful-api.dev/objects/' + VELORA_CLOUD_DB_ID;
+
+  async function fetchCloudData() {
+    try {
+      const res = await fetch(VELORA_CLOUD_DB_URL, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        return json.data || { users: [], files: [] };
+      }
+    } catch (e) {
+      console.warn('[Velora Cloud] Fetch registry error:', e);
+    }
+    return { users: [], files: [] };
+  }
+
+  async function saveCloudData(data) {
+    try {
+      await fetch(VELORA_CLOUD_DB_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'velora_cloud_master_database_v1',
+          data
+        })
+      });
+    } catch (e) {
+      console.warn('[Velora Cloud] Save registry error:', e);
+    }
+  }
+
+  async function syncLocalToCloud() {
+    try {
+      const localUsers = JSON.parse(localStorage.getItem('velora_offline_users') || '[]');
+      const localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+      const cloud = await fetchCloudData();
+      let changed = false;
+
+      // 1. Sync local users up to cloud
+      localUsers.forEach(lu => {
+        const email = (lu.email || '').trim().toLowerCase();
+        if (!email) return;
+        const cUser = cloud.users.find(u => (u.email || '').trim().toLowerCase() === email);
+        if (!cUser) {
+          cloud.users.push(lu);
+          changed = true;
+        } else {
+          if (lu.password && (!cUser.password || cUser.password !== lu.password)) {
+            cUser.password = lu.password;
+            changed = true;
+          }
+          if (lu.name && !cUser.name) {
+            cUser.name = lu.name;
+            changed = true;
+          }
+        }
+      });
+
+      // 2. Sync cloud users down to local
+      cloud.users.forEach(cu => {
+        const email = (cu.email || '').trim().toLowerCase();
+        if (!email) return;
+        const lIdx = localUsers.findIndex(u => (u.email || '').trim().toLowerCase() === email);
+        if (lIdx === -1) {
+          localUsers.push(cu);
+        } else {
+          localUsers[lIdx] = { ...localUsers[lIdx], ...cu };
+        }
+      });
+      localStorage.setItem('velora_offline_users', JSON.stringify(localUsers));
+
+      // 3. Sync local files up to cloud
+      localFiles.forEach(lf => {
+        if (!cloud.files.some(cf => cf.id === lf.id)) {
+          cloud.files.push(lf);
+          changed = true;
+        }
+      });
+
+      // 4. Sync cloud files down to local
+      let fileUpdated = false;
+      cloud.files.forEach(cf => {
+        const lIdx = localFiles.findIndex(f => f.id === cf.id);
+        if (lIdx === -1) {
+          localFiles.unshift(cf);
+          fileUpdated = true;
+        } else {
+          localFiles[lIdx] = { ...localFiles[lIdx], ...cf };
+        }
+      });
+      if (fileUpdated) {
+        localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+        window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+      }
+
+      if (changed) {
+        await saveCloudData(cloud);
+      }
+    } catch(e) {
+      console.warn('[Velora Cloud] Auto-sync error:', e);
+    }
+  }
+
   class ApiService {
     constructor() {
       const isStaticHost = window.location.hostname.includes('github.io') ||
@@ -71,7 +175,6 @@
       if (savedUrl) {
         this.serverUrl = savedUrl.replace(/\/+$/, '');
       } else if (isStaticHost) {
-        // When loaded on GitHub Pages or custom port, default backend target to http://localhost:3000
         this.serverUrl = 'http://localhost:3000';
       } else {
         this.serverUrl = '';
@@ -85,27 +188,9 @@
       this.fallbackMode = false;
       this.blobUrlCache = new Map();
 
-      // Initialize GunDB Decentralized Realtime Cloud Peer Network
-      this.gun = null;
-      if (typeof window !== 'undefined' && window.Gun) {
-        try {
-          this.gun = window.Gun({
-            peers: [
-              'https://gun-manhattan.herokuapp.com/gun',
-              'https://peer.wall.org/gun',
-              'https://relay.peer.ooo/gun'
-            ],
-            localStorage: false
-          });
-          console.log('[Velora] Decentralized Global Cloud Peer Sync online.');
-        } catch (e) {
-          console.warn('[Velora] Gun init error:', e);
-        }
-      }
-
-      if (this.user && this.user.email) {
-        this.startGunFileSync(this.user.email);
-      }
+      // Launch instant background cloud sync
+      syncLocalToCloud();
+      setInterval(syncLocalToCloud, 8000);
     }
 
     setServerUrl(url) {
@@ -134,79 +219,10 @@
       if (token) {
         localStorage.setItem('cloud_token', token);
         localStorage.setItem('cloud_user', JSON.stringify(user));
-        if (user && user.email) {
-          this.startGunFileSync(user.email);
-        }
       } else {
         localStorage.removeItem('cloud_token');
         localStorage.removeItem('cloud_user');
       }
-    }
-
-    startGunFileSync(email) {
-      if (!this.gun || !email) return;
-      const cleanEmail = email.trim().toLowerCase();
-      try {
-        this.gun.get('velora_cloud_files_v3_' + cleanEmail).map().on((fileData, fileKey) => {
-          let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-          if (!fileData) {
-            const beforeLen = localFiles.length;
-            localFiles = localFiles.filter(f => f.id !== fileKey);
-            if (localFiles.length !== beforeLen) {
-              localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
-              window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
-            }
-            return;
-          }
-          try {
-            const record = typeof fileData === 'string' ? JSON.parse(fileData) : fileData;
-            if (record && record.id) {
-              const existingIdx = localFiles.findIndex(f => f.id === record.id);
-              if (existingIdx >= 0) {
-                localFiles[existingIdx] = { ...localFiles[existingIdx], ...record };
-              } else {
-                localFiles.unshift(record);
-              }
-              localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
-              window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
-            }
-          } catch(e) {}
-        });
-      } catch(e) {
-        console.warn('Gun file sync error:', e);
-      }
-    }
-
-    async fetchGunFiles(email) {
-      if (!this.gun || !email) return;
-      const cleanEmail = email.trim().toLowerCase();
-      return new Promise((resolve) => {
-        let count = 0;
-        const timer = setTimeout(() => resolve(), 2200);
-        this.gun.get('velora_cloud_files_v3_' + cleanEmail).map().once((fileData) => {
-          if (!fileData) return;
-          try {
-            const record = typeof fileData === 'string' ? JSON.parse(fileData) : fileData;
-            if (record && record.id) {
-              let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-              const existingIdx = localFiles.findIndex(f => f.id === record.id);
-              if (existingIdx >= 0) {
-                localFiles[existingIdx] = { ...localFiles[existingIdx], ...record };
-              } else {
-                localFiles.unshift(record);
-              }
-              localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
-              count++;
-            }
-          } catch(e) {}
-        });
-        setTimeout(() => {
-          if (count > 0) {
-            window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
-          }
-          resolve();
-        }, 1200);
-      });
     }
 
     async uploadToCloudHost(file, onProgress) {
@@ -303,7 +319,6 @@
           const contentType = res.headers.get('content-type') || '';
           if (contentType.includes('application/json')) {
             const errData = await res.json().catch(() => ({}));
-            // If it's a login failure (e.g. wrong password), return the error message
             if (cleanEndpoint.includes('/auth/login')) {
               throw new Error(errData.error || 'Invalid email or password.');
             }
@@ -319,7 +334,6 @@
           return await res.json().catch(() => ({}));
         }
 
-        // Handle specific server JSON errors (e.g. 400 Bad Request, duplicate email, etc.)
         if (res) {
           const contentType = res.headers.get('content-type') || '';
           if (contentType.includes('application/json')) {
@@ -330,28 +344,23 @@
           }
         }
 
-        // If backend is 404 (static host without server) or network unreachable:
-        // Activate Seamless Local Browser Fallback so users are NEVER blocked with HTTP 404!
-        console.warn(`[Velora] Server not available at ${url} (HTTP ${res ? res.status : 'offline'}). Engaging Browser Local Mode.`);
+        // Seamless Browser Global Cloud Fallback Engine
         this.fallbackMode = true;
         this.isConnected = false;
         return await this.mockOfflineRequest(cleanEndpoint, options);
 
       } catch (err) {
         if (err.name === 'AbortError') throw err;
-        // If it's an explicit validation/auth error from server, rethrow to user
         if (err.message && !err.message.includes('404') && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
           throw err;
         }
-
-        // Fallback to offline local mode
         this.fallbackMode = true;
         this.isConnected = false;
         return await this.mockOfflineRequest(cleanEndpoint, options);
       }
     }
 
-    // --- Seamless Browser Local Fallback Engine (prevents 404 on GitHub Pages) ---
+    // --- Seamless Browser Global Cloud Engine (Zero Server, Zero 404) ---
     async mockOfflineRequest(endpoint, options = {}) {
       const method = (options.method || 'GET').toUpperCase();
       let body = {};
@@ -367,7 +376,7 @@
       let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
       let folders = JSON.parse(localStorage.getItem('velora_offline_folders') || '[]');
 
-      // 1. Sign Up (Only allowed once per email)
+      // 1. Sign Up (Only allowed once per email globally)
       if (endpoint === '/auth/register' && method === 'POST') {
         const cleanEmail = (body.email || '').trim().toLowerCase();
         if (!cleanEmail) {
@@ -377,7 +386,10 @@
           throw new Error('Password must be at least 6 characters.');
         }
 
-        const existingUser = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        const cloud = await fetchCloudData();
+        let existingUser = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
+                           cloud.users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+
         if (existingUser) {
           throw new Error('An account with this email already exists. Please sign in.');
         }
@@ -389,16 +401,16 @@
           password: body.password,
           is_verified: true,
           storageQuotaBytes: 53687091200,
-          created_at: Date.now()
+          created_at: Date.now(),
+          sessions: [{ token: 'offline_token_' + Date.now(), createdAt: Date.now() }]
         };
+
         users.push(newUser);
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
-        if (this.gun) {
-          try {
-            this.gun.get('velora_cloud_users_v3').get(cleanEmail).put(JSON.stringify(newUser));
-          } catch(e) {}
-        }
+        // Save immediately to Global Cloud DB
+        cloud.users.push(newUser);
+        await saveCloudData(cloud);
 
         return {
           success: true,
@@ -430,7 +442,7 @@
         };
       }
 
-      // 3. Login (Must already have signed up & enter correct password)
+      // 3. Login (Direct Long-Distance Access: Coimbatore ⟷ Dindigul)
       if (endpoint === '/auth/login' && method === 'POST') {
         const cleanEmail = (body.email || '').trim().toLowerCase();
         const inputPassword = body.password || '';
@@ -442,34 +454,10 @@
           throw new Error('Password is required.');
         }
 
-        let user = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
-        
-        // If account not found locally in this browser, fetch from GunDB Cloud!
-        if (!user && this.gun) {
-          try {
-            user = await new Promise((resolve) => {
-              let done = false;
-              const timer = setTimeout(() => {
-                if (!done) { done = true; resolve(null); }
-              }, 2500);
-              this.gun.get('velora_cloud_users_v3').get(cleanEmail).once((data) => {
-                if (!done && data) {
-                  done = true;
-                  clearTimeout(timer);
-                  try {
-                    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-                    if (parsed && parsed.email) resolve(parsed);
-                    else resolve(null);
-                  } catch(e) { resolve(null); }
-                }
-              });
-            });
-            if (user) {
-              users.push(user);
-              localStorage.setItem('velora_offline_users', JSON.stringify(users));
-            }
-          } catch(e) {}
-        }
+        // Fetch latest Cloud Database so friend in Coimbatore sees the account created in Dindigul!
+        const cloud = await fetchCloudData();
+        let user = cloud.users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
+                   users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
 
         if (!user) {
           throw new Error('No account found with this email. Please sign up first.');
@@ -479,12 +467,11 @@
           throw new Error('Incorrect password. Please try again.');
         }
 
-        // If legacy user did not have a password stored, bind it now
         if (!user.password && inputPassword) {
           user.password = inputPassword;
         }
 
-        // Support up to 5 concurrent friends/devices per email account in offline mode
+        // Support up to 5 concurrent friends/devices per email account
         if (!user.sessions) user.sessions = [];
         const token = 'offline_token_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
         user.sessions.push({ token, createdAt: Date.now() });
@@ -494,33 +481,37 @@
         user.activeFriendsCount = user.sessions.length;
         user.maxAllowedFriends = 5;
 
-        // Save updated sessions locally and to GunDB
+        // Save updated sessions locally and in the Cloud
         const uIdx = users.findIndex(u => (u.email || '').trim().toLowerCase() === cleanEmail);
         if (uIdx >= 0) users[uIdx] = user;
         else users.push(user);
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
-        if (this.gun) {
-          try {
-            this.gun.get('velora_cloud_users_v3').get(cleanEmail).put(JSON.stringify(user));
-          } catch(e) {}
-        }
+        const cIdx = cloud.users.findIndex(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        if (cIdx >= 0) cloud.users[cIdx] = user;
+        else cloud.users.push(user);
+        saveCloudData(cloud).catch(() => {});
 
         this.setAuth(token, user);
-        this.startGunFileSync(cleanEmail);
 
-        // Bind any orphaned or unassigned files to this user account so they never disappear
+        // Instantly adopt cloud files belonging to this user
         let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-        let filesChanged = false;
-        allFiles.forEach(f => {
-          if ((!f.user_id || f.user_id === 'user_offline') && user.id) {
-            f.user_id = user.id;
-            f.user_email = user.email;
-            filesChanged = true;
+        if (cloud.files && cloud.files.length > 0) {
+          let changed = false;
+          cloud.files.forEach(cf => {
+            if ((cf.user_email || '').toLowerCase() === cleanEmail) {
+              const fIdx = allFiles.findIndex(f => f.id === cf.id);
+              if (fIdx === -1) {
+                allFiles.unshift(cf);
+                changed = true;
+              } else {
+                allFiles[fIdx] = { ...allFiles[fIdx], ...cf };
+              }
+            }
+          });
+          if (changed) {
+            localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
           }
-        });
-        if (filesChanged) {
-          localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
         }
 
         return {
@@ -598,9 +589,26 @@
           localStorage.setItem('velora_offline_files', JSON.stringify(files));
         }
 
-        // Fetch peer cloud files if Gun is active
-        if (this.gun && currentEmail) {
-          this.fetchGunFiles(currentEmail).catch(() => {});
+        // Fetch cloud data and merge into local
+        const cloud = await fetchCloudData();
+        if (cloud.files && cloud.files.length > 0 && currentEmail) {
+          let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+          let changed = false;
+          cloud.files.forEach(cf => {
+            if ((cf.user_email || '').toLowerCase() === currentEmail) {
+              const fIdx = allFiles.findIndex(f => f.id === cf.id);
+              if (fIdx === -1) {
+                allFiles.unshift(cf);
+                changed = true;
+              } else {
+                allFiles[fIdx] = { ...allFiles[fIdx], ...cf };
+              }
+            }
+          });
+          if (changed) {
+            files = allFiles;
+            localStorage.setItem('velora_offline_files', JSON.stringify(files));
+          }
         }
 
         let userFiles = files;
@@ -633,16 +641,15 @@
       // 10. Delete File (ONLY delete when user explicitly requests)
       if (endpoint.startsWith('/files/') && method === 'DELETE') {
         const fileId = endpoint.replace('/files/', '');
-        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : '';
         files = files.filter(f => f.id !== fileId);
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
         idbDeleteBlob(fileId);
 
-        if (this.gun && currentEmail) {
-          try {
-            this.gun.get('velora_cloud_files_v3_' + currentEmail).get(fileId).put(null);
-          } catch(e) {}
-        }
+        fetchCloudData().then(cloud => {
+          cloud.files = cloud.files.filter(f => f.id !== fileId);
+          return saveCloudData(cloud);
+        }).catch(() => {});
+
         return { success: true };
       }
 
@@ -877,12 +884,12 @@
         files.unshift(newFileRecord);
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
 
-        // Sync file metadata across peers in real-time
-        if (this.gun && currentEmail) {
-          try {
-            this.gun.get('velora_cloud_files_v3_' + currentEmail).get(fileId).put(JSON.stringify(newFileRecord));
-          } catch(e) {}
-        }
+        // Save to cloud registry so Friend B in Coimbatore gets the file immediately
+        fetchCloudData().then(cloud => {
+          cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
+          cloud.files.unshift(newFileRecord);
+          return saveCloudData(cloud);
+        }).catch(() => {});
 
         if (onProgress && !cloudUploaded) {
           onProgress({
@@ -912,7 +919,6 @@
           }
         });
       } catch (initErr) {
-        // If server returned 404 or failed, fall back gracefully to local save
         this.fallbackMode = true;
         return this.uploadFileInChunks(file, { folderId, onProgress });
       }
@@ -1056,7 +1062,7 @@
     async backupFileToGDrive(fileId) { return this.request(`/gdrive/backup/${fileId}`, { method: 'POST' }); }
   }
 
-  // Global helper for offline blob downloads
+  // Global helper for offline and cloud blob downloads
   global.downloadOfflineBlob = async function (fileId) {
     const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
     const file = files.find(f => f.id === fileId);
