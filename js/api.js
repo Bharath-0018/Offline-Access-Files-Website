@@ -311,10 +311,19 @@
         // If legacy user did not have a password stored, bind it now
         if (!user.password && inputPassword) {
           user.password = inputPassword;
-          localStorage.setItem('velora_offline_users', JSON.stringify(users));
         }
 
-        const token = 'offline_token_' + Date.now();
+        // Support up to 5 concurrent friends/devices per email account in offline mode
+        if (!user.sessions) user.sessions = [];
+        const token = 'offline_token_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        user.sessions.push({ token, createdAt: Date.now() });
+        if (user.sessions.length > 5) {
+          user.sessions = user.sessions.slice(-5);
+        }
+        user.activeFriendsCount = user.sessions.length;
+        user.maxAllowedFriends = 5;
+        localStorage.setItem('velora_offline_users', JSON.stringify(users));
+
         this.setAuth(token, user);
 
         // Bind any orphaned or unassigned files to this user account so they never disappear
@@ -340,11 +349,21 @@
 
       // 4. Me
       if (endpoint === '/auth/me') {
-        return { user: this.user || { id: 'user_offline', name: 'Velora User', email: 'user@velora.cloud' } };
+        const u = this.user || { id: 'user_offline', name: 'Velora User', email: 'user@velora.cloud' };
+        u.maxAllowedFriends = 5;
+        u.activeFriendsCount = (u.sessions && u.sessions.length) || 1;
+        return { user: u };
       }
 
       // 5. Logout
       if (endpoint === '/auth/logout') {
+        if (this.token && this.user) {
+          let user = users.find(u => u.id === this.user.id || (u.email && u.email === this.user.email));
+          if (user && user.sessions) {
+            user.sessions = user.sessions.filter(s => s.token !== this.token);
+            localStorage.setItem('velora_offline_users', JSON.stringify(users));
+          }
+        }
         this.setAuth(null, null);
         return { success: true };
       }

@@ -108,6 +108,13 @@
         </div>
 
         <div class="topbar-right">
+          <!-- 5 Friends Long-Distance Access Button -->
+          <button class="btn-secondary" id="btn-open-friends-modal" onclick="window.openFriendsModal()" title="Share files with up to 5 friends in Coimbatore or anywhere in the world" style="display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:0.82rem; padding:7px 12px; border-radius:var(--radius-sm); background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.35); color:#a5b4fc; cursor:pointer;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>5 Friends Access</span>
+            <span id="friends-badge-count" style="background:#6366f1; color:#fff; border-radius:12px; padding:1px 6px; font-size:0.7rem; font-weight:700;">1/5</span>
+          </button>
+
           <!-- LAN Status Indicator -->
           <div class="network-pill" id="network-pill">
             <div class="network-pill-pulse"></div>
@@ -273,6 +280,57 @@
 
       <button class="btn-primary" style="width:100%; justify-content:center; padding:11px;" onclick="window.verifyOtpSubmit()">
         Verify & Open Personal Cloud
+      </button>
+    </div>
+  </div>
+
+  <!-- 5 Friends Long-Distance Access Modal -->
+  <div class="modal-backdrop" id="modal-friends-access" onclick="if(event.target===this) window.closeFriendsModal()">
+    <div class="modal-card" style="max-width: 560px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div style="width:42px; height:42px; border-radius:10px; background:rgba(99,102,241,0.2); display:flex; align-items:center; justify-content:center; color:#818cf8;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div>
+            <h3 style="margin:0; font-size:1.15rem; font-weight:700;">5 Friends Access (Long Distance)</h3>
+            <p style="margin:2px 0 0 0; font-size:0.8rem; color:var(--text-secondary);">Dindigul ⟷ Coimbatore & Worldwide</p>
+          </div>
+        </div>
+        <button class="btn-icon" onclick="window.closeFriendsModal()" style="font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <div style="background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.3); border-radius:var(--radius-sm); padding:14px; margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:0.85rem; font-weight:600; color:#c7d2fe;">👥 Concurrent Logins per Email</span>
+          <span id="modal-friends-active-pill" style="background:#4f46e5; color:#fff; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:12px;">1 / 5 Active</span>
+        </div>
+        <p style="font-size:0.78rem; color:var(--text-secondary); margin:0;">
+          Your account permits up to <strong>5 friends to be logged in at the same time</strong> with your Email and Password without kicking each other out!
+        </p>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label style="font-size:0.82rem; font-weight:600; color:var(--text-secondary); margin-bottom:6px; display:block;">Public Internet / Cloud URL for Friends:</label>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="modal-friends-server-url" class="form-input" style="flex:1; font-family:monospace; font-size:0.85rem;" placeholder="https://xxxx.a.pinggy.link or Cloud URL">
+          <button class="btn-primary" onclick="window.copyFriendsUrl()" style="white-space:nowrap; padding:8px 14px; font-size:0.8rem;">Copy Link</button>
+          <button class="btn-secondary" onclick="window.saveFriendsServerUrl()" style="white-space:nowrap; padding:8px 14px; font-size:0.8rem;">Connect</button>
+        </div>
+      </div>
+
+      <div style="background:rgba(15,23,42,0.6); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:14px; margin-bottom:18px; font-size:0.8rem; line-height:1.6;">
+        <strong style="color:var(--text-primary); display:block; margin-bottom:6px;">How your Coimbatore friends connect:</strong>
+        <ol style="margin:0; padding-left:18px; color:var(--text-secondary);">
+          <li>Double click <code style="color:#818cf8;">start-velora-online.bat</code> on your PC to get your public HTTPS link.</li>
+          <li>Send that public link to your friends in Coimbatore.</li>
+          <li>Your friends open the link and log in with your <strong>Email ID</strong> and <strong>Password</strong>.</li>
+          <li>All uploaded movies and files appear automatically in their browser!</li>
+        </ol>
+      </div>
+
+      <button class="btn-secondary" style="width:100%; justify-content:center; padding:9px;" onclick="window.closeFriendsModal()">
+        Done
       </button>
     </div>
   </div>

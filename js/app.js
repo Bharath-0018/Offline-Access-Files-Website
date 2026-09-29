@@ -1317,7 +1317,76 @@
     if (nameEl) nameEl.textContent = state.user.name;
     if (emailEl) emailEl.textContent = state.user.email;
     if (avatarEl) avatarEl.textContent = state.user.name.charAt(0).toUpperCase();
+
+    const badge = document.getElementById('friends-badge-count');
+    const activeFriends = state.user.activeFriendsCount || 1;
+    const maxFriends = state.user.maxAllowedFriends || 5;
+    if (badge) badge.textContent = `${activeFriends}/${maxFriends}`;
   }
+
+  // --- 5 Friends Long-Distance Access Controller ---
+  global.openFriendsModal = async function () {
+    const modal = document.getElementById('modal-friends-access');
+    if (!modal) return;
+
+    try {
+      const meRes = await api.request('/auth/me');
+      if (meRes && meRes.user) {
+        state.user = { ...state.user, ...meRes.user };
+        updateUserHeader();
+      }
+    } catch (e) {}
+
+    const activeCount = (state.user && state.user.activeFriendsCount) || 1;
+    const maxCount = (state.user && state.user.maxAllowedFriends) || 5;
+
+    const pill = document.getElementById('modal-friends-active-pill');
+    if (pill) {
+      pill.textContent = `${activeCount} / ${maxCount} Active Logins`;
+    }
+
+    const inputUrl = document.getElementById('modal-friends-server-url');
+    if (inputUrl) {
+      inputUrl.value = api.getServerUrl() || window.location.origin;
+    }
+
+    modal.classList.add('open');
+  };
+
+  global.closeFriendsModal = function () {
+    const modal = document.getElementById('modal-friends-access');
+    if (modal) modal.classList.remove('open');
+  };
+
+  global.copyFriendsUrl = function () {
+    const input = document.getElementById('modal-friends-server-url');
+    const url = input ? input.value.trim() : window.location.origin;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url);
+    } else if (input) {
+      input.select();
+      document.execCommand('copy');
+    }
+    showToast('Link copied! Send to your 5 friends in Coimbatore or anywhere in the world.', 'success');
+  };
+
+  global.saveFriendsServerUrl = async function () {
+    const input = document.getElementById('modal-friends-server-url');
+    const url = input ? input.value.trim() : '';
+    if (!url) {
+      showToast('Please enter a valid URL.', 'error');
+      return;
+    }
+    api.setServerUrl(url);
+    const reachable = await api.pingServer();
+    if (reachable) {
+      showToast('Connected to cloud server!', 'success');
+      loadFiles();
+      loadStorageStats();
+    } else {
+      showToast('Could not reach server at this URL. Please verify server is running.', 'error');
+    }
+  };
 
   // --- File Actions & Chunked Upload ---
   let activeUploadId = null;

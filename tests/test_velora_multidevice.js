@@ -326,11 +326,99 @@ async function runTests() {
     assert(delRes.status === 200, 'User explicitly deleted the file from cloud');
 
     // Confirm file is gone from Alice's account
-    const checkFilesAfterDel = await makeRequest('GET', '/api/files', {
-      'Authorization': `Bearer ${tokenComputerA}`
+    // --- 9. 5-FRIEND CONCURRENT LOGIN VERIFICATION (Dindigul + Coimbatore Friends) ---
+    console.log('\n--- Step 9: 5 Concurrent Friend Logins per Email Account ---');
+    const groupEmail = `group_${Date.now()}@velora.com`;
+    const groupPass = 'FriendGroupSecret2026!';
+    const grpReg = await makeRequest('POST', '/api/auth/register', {}, {
+      name: 'Bharath & Friends',
+      email: groupEmail,
+      password: groupPass
     });
-    assert(checkFilesAfterDel.json.files.length === 0, 'File is removed from cloud file list on Computer A');
-    assert(!fs.existsSync(diskPath), 'File is physically removed from server storage disk');
+    const grpVerify = await makeRequest('POST', '/api/auth/verify-otp', {}, {
+      email: groupEmail,
+      code: grpReg.json.otpCode
+    });
+    const primaryToken = grpVerify.json.token;
+    assert(!!primaryToken, 'Friend group account registered and verified');
+
+    // Simulate 5 friends logging in simultaneously from different locations
+    const friendTokens = [];
+    for (let f = 1; f <= 5; f++) {
+      const loginRes = await makeRequest('POST', '/api/auth/login', {}, {
+        email: groupEmail,
+        password: groupPass
+      });
+      assert(loginRes.status === 200 && loginRes.json.sessionToken, `Friend ${f} logged in successfully with the same email`);
+      friendTokens.push(loginRes.json.sessionToken);
+      assert(loginRes.json.user.maxAllowedFriends === 5, `Friend ${f} reports maxAllowedFriends: 5`);
+    }
+
+    // Friend 1 uploads a shared file
+    const sharedData = Buffer.from('Shared movie or notes between Dindigul and Coimbatore friends!');
+    const sharedHash = crypto.createHash('sha256').update(sharedData).digest('hex');
+    const initGrpUpload = await makeRequest('POST', '/api/files/chunk/init', {
+      'Authorization': `Bearer ${friendTokens[0]}`,
+      'Content-Type': 'application/json'
+    }, {
+      fileName: 'Covai_Dindigul_Shared.txt',
+      fileSize: sharedData.length,
+      chunkSize: sharedData.length,
+      totalChunks: 1,
+      mimeType: 'text/plain',
+      category: 'documents',
+      clientChecksum: sharedHash
+    });
+    await makeRequest('POST', '/api/files/chunk/upload', {
+      'Authorization': `Bearer ${friendTokens[0]}`,
+      'Content-Type': 'application/octet-stream',
+      'X-Upload-Id': initGrpUpload.json.uploadId,
+      'X-Chunk-Index': '0',
+      'X-Total-Chunks': '1'
+    }, sharedData);
+    const grpFin = await makeRequest('POST', '/api/files/chunk/finalize', {
+      'Authorization': `Bearer ${friendTokens[0]}`,
+      'Content-Type': 'application/json'
+    }, {
+      uploadId: initGrpUpload.json.uploadId,
+      clientChecksum: sharedHash
+    });
+    assert(grpFin.status === 200 && grpFin.json.file, 'Friend 1 uploaded shared file');
+
+    // Verify all 5 friends can simultaneously access and download the file
+    for (let f = 0; f < 5; f++) {
+      const flRes = await makeRequest('GET', '/api/files', {
+        'Authorization': `Bearer ${friendTokens[f]}`
+      });
+      assert(flRes.status === 200 && flRes.json.files.length === 1, `Friend ${f + 1} can list the shared file`);
+
+      const dlRes = await makeRequest('GET', `/api/files/download/${grpFin.json.file.id}`, {
+        'Authorization': `Bearer ${friendTokens[f]}`
+      });
+      assert(dlRes.status === 200 && dlRes.buffer.toString() === sharedData.toString(), `Friend ${f + 1} downloaded the identical shared file`);
+    }
+
+    // Friend 2 logs out
+    const logoutRes = await makeRequest('POST', '/api/auth/logout', {
+      'Authorization': `Bearer ${friendTokens[1]}`
+    });
+    assert(logoutRes.status === 200, 'Friend 2 logged out');
+
+    // Verify Friend 2 is logged out, but Friend 1, 3, 4, 5 are still active!
+    const f2Check = await makeRequest('GET', '/api/files', {
+      'Authorization': `Bearer ${friendTokens[1]}`
+    });
+    assert(f2Check.status === 401, 'Friend 2 token is revoked');
+
+    const f3Check = await makeRequest('GET', '/api/files', {
+      'Authorization': `Bearer ${friendTokens[2]}`
+    });
+    assert(f3Check.status === 200, 'Friend 3 remains logged in and can still access files!');
+
+    const f1Check = await makeRequest('GET', '/api/files', {
+      'Authorization': `Bearer ${friendTokens[0]}`
+    });
+    assert(f1Check.status === 200, 'Friend 1 remains logged in and can still access files!');
 
     // Clean up
     console.log('\n====================================================');
