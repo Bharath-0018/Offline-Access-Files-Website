@@ -198,8 +198,9 @@
           <h1 class="section-title">Welcome to Velora, ${escapeHtml(state.user.name)}!</h1>
           <p class="section-subtitle">Personal cloud + pendrive-style file system across all your devices.</p>
         </div>
-        <div style="display:flex; gap:10px;">
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
           <button class="btn-primary" onclick="window.triggerUpload()">${Icons.render('upload-cloud')} Upload to Cloud</button>
+          <button class="btn-secondary" onclick="window.shareAccountWithDevice()">${Icons.render('laptop')} Share with Computer B</button>
           <button class="btn-secondary" onclick="window.navigateTo('devices')">${Icons.render('devices')} Offline Transfer</button>
           <button class="btn-secondary" onclick="window.syncNow()">${Icons.render('refresh-cw')} Sync</button>
         </div>
@@ -924,7 +925,12 @@
             </div>
             <div class="form-group">
               <label>Password</label>
-              <input type="password" id="login-password" class="form-input" placeholder="••••••••" required>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="login-password" class="form-input" style="padding-right:42px;" placeholder="••••••••" required>
+                <button type="button" class="btn-toggle-pw" onclick="window.togglePasswordVisibility('login-password', this)" style="position:absolute; right:8px; background:transparent; border:none; color:var(--text-muted); cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center;" title="Show/Hide password">
+                  ${Icons.render('eye', 18)}
+                </button>
+              </div>
             </div>
             <button type="submit" class="btn-primary" style="width:100%; justify-content:center; padding:11px; margin-top:8px;">
               Sign In to Velora Cloud
@@ -946,25 +952,39 @@
             </div>
             <div class="form-group">
               <label>Password (Min 6 chars)</label>
-              <input type="password" id="signup-password" class="form-input" placeholder="••••••••" minlength="6" required>
+              <div style="position:relative; display:flex; align-items:center;">
+                <input type="password" id="signup-password" class="form-input" style="padding-right:42px;" placeholder="••••••••" minlength="6" required>
+                <button type="button" class="btn-toggle-pw" onclick="window.togglePasswordVisibility('signup-password', this)" style="position:absolute; right:8px; background:transparent; border:none; color:var(--text-muted); cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center;" title="Show/Hide password">
+                  ${Icons.render('eye', 18)}
+                </button>
+              </div>
             </div>
             <button type="submit" class="btn-primary" style="width:100%; justify-content:center; padding:11px; margin-top:8px;">
               Create Velora Cloud Account
             </button>
           </form>
 
-          <!-- Server Connection Box -->
-          <div style="margin-top:20px; padding:12px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); font-size:0.78rem;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <span style="color:var(--text-secondary); font-weight:600;">Backend Server Connection:</span>
-              <span style="color:var(--accent-emerald);">Configurable</span>
+          <!-- Multi-Device Connection Card for Computer B -->
+          <div style="margin-top:20px; padding:14px; background:linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8)); border:1px solid rgba(99, 102, 241, 0.3); border-radius:var(--radius-md); font-size:0.78rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="color:var(--text-primary); font-weight:600; display:flex; align-items:center; gap:6px;">
+                ${Icons.render('laptop', 16, 'text-primary')} Connecting from Computer B or Mobile?
+              </span>
+              <span id="server-status-pill" class="badge" style="background:${api.isConnected ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}; color:${api.isConnected ? 'var(--accent-emerald)' : 'var(--accent-rose)'}; font-size:0.7rem;">
+                ${api.isConnected ? '● Connected' : '● Standalone'}
+              </span>
             </div>
+            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px; line-height:1.4;">
+              To access accounts & files created on Computer A, connect to Computer A's Velora host IP (e.g. <code>http://192.168.1.15:3000</code>).
+            </p>
             <div style="display:flex; gap:6px;">
-              <input type="text" id="auth-server-input" class="form-input" style="padding:5px 8px; font-size:0.75rem;" value="${escapeHtml(api.getServerUrl())}" placeholder="http://localhost:3000">
-              <button type="button" class="btn-secondary" style="padding:5px 10px; font-size:0.75rem; white-space:nowrap;" onclick="window.saveAuthServerUrl()">Connect</button>
+              <input type="text" id="auth-server-input" class="form-input" style="padding:6px 10px; font-size:0.76rem;" value="${escapeHtml(api.getServerUrl())}" placeholder="http://192.168.1.X:3000">
+              <button type="button" class="btn-primary" style="padding:6px 12px; font-size:0.76rem; white-space:nowrap;" onclick="window.saveAuthServerUrl()">Connect</button>
             </div>
-            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:5px;">
-              Running <code>start-server.bat</code> on your PC enables multi-device sync across Computer A and B.
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+              <a href="javascript:void(0)" onclick="window.promptImportAccountSync()" style="font-size:0.74rem; color:var(--accent-cyan); text-decoration:none; font-weight:500; display:flex; align-items:center; gap:4px;">
+                ${Icons.render('copy', 13)} Have an Account Sync Link / Key? Click to Import
+              </a>
             </div>
           </div>
         </div>
@@ -972,12 +992,180 @@
     `;
   }
 
-  global.saveAuthServerUrl = function () {
+  global.togglePasswordVisibility = function (inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const isPassword = input.type === 'password';
+    input.type = isPassword ? 'text' : 'password';
+    if (btn) {
+      btn.innerHTML = Icons.render(isPassword ? 'eye-off' : 'eye', 18);
+      btn.title = isPassword ? 'Hide password' : 'Show password';
+      btn.style.color = isPassword ? 'var(--primary)' : 'var(--text-muted)';
+    }
+  };
+
+  global.saveAuthServerUrl = async function () {
     const input = document.getElementById('auth-server-input');
     if (!input) return;
     const url = input.value.trim();
-    api.setServerUrl(url);
-    showToast('Velora server URL saved: ' + api.getServerUrl(), 'success');
+    if (!url) {
+      api.setServerUrl('');
+      showToast('Cleared backend server URL. Running in offline standalone mode.', 'info');
+      return;
+    }
+    showToast('Testing connection to ' + url + '...', 'info');
+    try {
+      const res = await fetch(`${url.replace(/\/+$/, '')}/api/health`, { method: 'GET' });
+      if (res.ok) {
+        api.setServerUrl(url);
+        api.isConnected = true;
+        api.fallbackMode = false;
+        showToast('✓ Successfully connected to Computer A Velora Cloud!', 'success');
+        const pill = document.getElementById('server-status-pill');
+        if (pill) {
+          pill.style.background = 'rgba(16, 185, 129, 0.2)';
+          pill.style.color = 'var(--accent-emerald)';
+          pill.textContent = '● Connected';
+        }
+      } else {
+        throw new Error('HTTP ' + res.status);
+      }
+    } catch (e) {
+      api.setServerUrl(url);
+      showToast('Saved URL, but could not connect. Ensure start-velora.bat is running on Computer A.', 'warning');
+    }
+  };
+
+  global.shareAccountWithDevice = function () {
+    if (!state.user) return;
+    const syncData = {
+      user: {
+        id: state.user.id,
+        email: state.user.email,
+        name: state.user.name,
+        storageQuotaBytes: state.user.storageQuotaBytes
+      },
+      files: (state.files || []).map(f => ({
+        id: f.id,
+        name: f.name,
+        original_name: f.original_name,
+        size_bytes: f.size_bytes,
+        category: f.category,
+        mime_type: f.mime_type,
+        created_at: f.created_at,
+        user_id: state.user.id,
+        user_email: state.user.email
+      })),
+      serverUrl: api.getServerUrl() || window.location.origin
+    };
+
+    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(syncData))));
+    const shareUrl = `${window.location.origin}${window.location.pathname}?sync=${encoded}`;
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop open';
+    modal.id = 'sync-share-modal';
+    modal.innerHTML = `
+      <div class="modal-card" style="max-width:540px;">
+        <div class="modal-header">
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${Icons.render('laptop', 22, 'text-primary')}
+            <h3 style="font-size:1.15rem; font-weight:700;">Share Access with Computer B / Friend</h3>
+          </div>
+          <button class="btn-icon" onclick="document.getElementById('sync-share-modal').remove()">${Icons.render('x-circle', 18)}</button>
+        </div>
+        <p style="font-size:0.84rem; color:var(--text-secondary); margin:12px 0 16px; line-height:1.5;">
+          Send this 1-click link to your friend on Computer B or Mobile. When opened, their browser will automatically recognize your account and files!
+        </p>
+
+        <div class="form-group">
+          <label>1-Click Share Link for Computer B / Mobile:</label>
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="share-sync-link-input" class="form-input" style="font-size:0.75rem;" value="${escapeHtml(shareUrl)}" readonly>
+            <button class="btn-primary" style="white-space:nowrap;" onclick="navigator.clipboard.writeText('${shareUrl}').then(() => showToast('Link copied to clipboard!', 'success'))">Copy Link</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top:14px;">
+          <label>Host Computer LAN URL (Same Wi-Fi):</label>
+          <div style="display:flex; gap:6px;">
+            <input type="text" class="form-input" style="font-size:0.8rem;" value="${escapeHtml(api.getServerUrl() || window.location.origin)}" readonly>
+            <button class="btn-secondary" style="white-space:nowrap;" onclick="navigator.clipboard.writeText('${api.getServerUrl() || window.location.origin}').then(() => showToast('Server URL copied!', 'success'))">Copy URL</button>
+          </div>
+          <p style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">
+            If both computers are on the same Wi-Fi, your friend can open this URL directly in Chrome/Edge.
+          </p>
+        </div>
+
+        <div style="text-align:right; margin-top:18px;">
+          <button class="btn-secondary" onclick="document.getElementById('sync-share-modal').remove()">Close</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  };
+
+  global.importAccountSyncPayload = function (rawPayload) {
+    try {
+      let jsonStr = '';
+      if (rawPayload.includes('sync=')) {
+        const u = new URL(rawPayload, window.location.href);
+        const code = u.searchParams.get('sync');
+        jsonStr = decodeURIComponent(escape(atob(code)));
+      } else {
+        jsonStr = decodeURIComponent(escape(atob(rawPayload.trim())));
+      }
+
+      const data = JSON.parse(jsonStr);
+      if (!data || !data.user || !data.user.email) {
+        throw new Error('Invalid sync data package.');
+      }
+
+      // 1. Save user in offline users list
+      let users = JSON.parse(localStorage.getItem('velora_offline_users') || '[]');
+      const cleanEmail = (data.user.email || '').trim().toLowerCase();
+      let existingUser = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+      if (!existingUser) {
+        users.push(data.user);
+      } else {
+        Object.assign(existingUser, data.user);
+      }
+      localStorage.setItem('velora_offline_users', JSON.stringify(users));
+
+      // 2. Import files
+      if (Array.isArray(data.files) && data.files.length > 0) {
+        let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        data.files.forEach(df => {
+          if (!files.some(f => f.id === df.id)) {
+            files.unshift(df);
+          }
+        });
+        localStorage.setItem('velora_offline_files', JSON.stringify(files));
+      }
+
+      // 3. Set host server URL if provided
+      if (data.serverUrl && !data.serverUrl.includes('localhost')) {
+        api.setServerUrl(data.serverUrl);
+      }
+
+      // Pre-fill login input if on auth screen
+      const emailInput = document.getElementById('login-email');
+      if (emailInput) {
+        emailInput.value = data.user.email;
+      }
+
+      showToast(`✓ Account "${data.user.name}" & ${data.files ? data.files.length : 0} files imported! You can now sign in.`, 'success');
+      return true;
+    } catch (e) {
+      showToast('Import failed: ' + e.message, 'error');
+      return false;
+    }
+  };
+
+  global.promptImportAccountSync = function () {
+    const input = prompt('Paste the Share Link or Sync Key sent from Computer A:');
+    if (!input || !input.trim()) return;
+    window.importAccountSyncPayload(input.trim());
   };
 
   // --- Storage Stats Updater ---
@@ -1363,6 +1551,17 @@
   document.addEventListener('DOMContentLoaded', async () => {
     videoPlayer.init();
     initWebSocket();
+
+    // Check if opened via ?sync= URL parameter from Computer A
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('sync')) {
+        const syncVal = urlParams.get('sync');
+        window.importAccountSyncPayload(syncVal);
+        // Clean query parameter from address bar
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch (e) {}
 
     // Check existing auth
     if (api.token) {

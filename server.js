@@ -607,14 +607,19 @@ if (require.main === module) {
   server.listen(PORT, '0.0.0.0', () => {
     const primaryIp = discovery.getPrimaryIp();
     console.log('================================================================');
-    console.log('🚀 OfflineAccess - Offline Personal Cloud & Local File Sharing');
+    console.log('🚀 VELORA CLOUD - PERSONAL CLOUD & MULTI-DEVICE FILE SYSTEM');
     console.log('================================================================');
-    console.log(`🌐 Local Web Portal:      http://localhost:${PORT}`);
-    console.log(`📶 LAN Access URL:         http://${primaryIp}:${PORT}`);
-    console.log(`📡 Device Discovery:       UDP Port 41234 (Active)`);
-    console.log(`🔌 WebSocket Signaling:    ws://${primaryIp}:${PORT}/ws`);
-    console.log('🔒 Zero-Internet Engine:   ACTIVE & READY');
-    console.log('================================================================');
+    console.log(`💻 COMPUTER A (This PC):`);
+    console.log(`   👉 Open: http://localhost:${PORT}`);
+    console.log('');
+    console.log(`🖥️ COMPUTER B / FRIEND'S PC / MOBILE (Same Wi-Fi):`);
+    console.log(`   👉 Connect to: http://${primaryIp}:${PORT}`);
+    console.log(`   (Both computers share the exact same accounts & files!)`);
+    console.log('');
+    console.log(`📡 Local Device Discovery:  UDP Port 41234 (Active)`);
+    console.log(`🔌 Live WebSocket Sync:    ws://${primaryIp}:${PORT}/ws`);
+    console.log('🔒 Zero-Internet Engine:   READY & RUNNING');
+    console.log('================================================================\n');
   });
 
   // Handle graceful shutdown

@@ -45,7 +45,9 @@
     'arrow-up-right': '<line x1="7" x2="17" y1="17" y2="7"/><polyline points="7 7 17 7 17 17"/>',
     'arrow-down-left': '<line x1="17" x2="7" y1="7" y2="17"/><polyline points="17 17 7 17 7 7"/>',
     send: '<line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
-    'arrow-left': '<polyline points="12 19 5 12 12 5"/><line x1="19" x2="5" y1="12" y2="12"/>'
+    'arrow-left': '<polyline points="12 19 5 12 12 5"/><line x1="19" x2="5" y1="12" y2="12"/>',
+    eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="7" r="3"/>',
+    'eye-off': '<path d="m9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>'
   };
 
   global.Icons = {
