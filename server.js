@@ -101,7 +101,10 @@ const MIME_TYPES = {
 
 const requestHandler = async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname;
+  let pathname = parsedUrl.pathname || '/';
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    pathname = pathname.slice(0, -1);
+  }
   const method = req.method;
 
   // Production HTTPS Redirection

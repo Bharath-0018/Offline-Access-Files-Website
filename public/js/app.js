@@ -952,10 +952,33 @@
               Create Velora Cloud Account
             </button>
           </form>
+
+          <!-- Server Connection Box -->
+          <div style="margin-top:20px; padding:12px; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); font-size:0.78rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <span style="color:var(--text-secondary); font-weight:600;">Backend Server Connection:</span>
+              <span style="color:var(--accent-emerald);">Configurable</span>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="auth-server-input" class="form-input" style="padding:5px 8px; font-size:0.75rem;" value="${escapeHtml(api.getServerUrl())}" placeholder="http://localhost:3000">
+              <button type="button" class="btn-secondary" style="padding:5px 10px; font-size:0.75rem; white-space:nowrap;" onclick="window.saveAuthServerUrl()">Connect</button>
+            </div>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:5px;">
+              Running <code>start-server.bat</code> on your PC enables multi-device sync across Computer A and B.
+            </div>
+          </div>
         </div>
       </div>
     `;
   }
+
+  global.saveAuthServerUrl = function () {
+    const input = document.getElementById('auth-server-input');
+    if (!input) return;
+    const url = input.value.trim();
+    api.setServerUrl(url);
+    showToast('Velora server URL saved: ' + api.getServerUrl(), 'success');
+  };
 
   // --- Storage Stats Updater ---
   async function loadStorageStats() {
