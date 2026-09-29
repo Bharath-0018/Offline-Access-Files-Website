@@ -494,7 +494,24 @@
     }
 
     // --- Resumable 5MB Chunk Streaming Uploader ---
-    async uploadFileInChunks(file, { folderId = null, onProgress = null } = {}) {
+    async uploadFileChunked(file, optionsOrFolderId = null, maybeProgress = null) {
+      return this.uploadFileInChunks(file, optionsOrFolderId, maybeProgress);
+    }
+
+    async uploadFileInChunks(file, optionsOrFolderId = null, maybeProgress = null) {
+      let folderId = null;
+      let onProgress = null;
+
+      if (typeof optionsOrFolderId === 'function') {
+        onProgress = optionsOrFolderId;
+      } else if (optionsOrFolderId && typeof optionsOrFolderId === 'object' && !(optionsOrFolderId instanceof Blob)) {
+        folderId = optionsOrFolderId.folderId || null;
+        onProgress = optionsOrFolderId.onProgress || null;
+      } else {
+        folderId = optionsOrFolderId || null;
+        onProgress = maybeProgress || null;
+      }
+
       const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
       const totalSize = file.size;
       const totalChunks = Math.ceil(totalSize / CHUNK_SIZE) || 1;
@@ -530,7 +547,17 @@
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
 
         if (onProgress) {
-          onProgress({ percent: 100, uploadedBytes: totalSize, totalBytes: totalSize, speedBps: 5000000, etaSec: 0 });
+          onProgress({
+            uploadId: fileId,
+            fileName: file.name,
+            percent: 100,
+            uploadedBytes: totalSize,
+            totalBytes: totalSize,
+            speedBps: 5000000,
+            etaSec: 0,
+            chunkIndex: 0,
+            totalChunks: 1
+          });
         }
         return { success: true, file: newFileRecord };
       }
