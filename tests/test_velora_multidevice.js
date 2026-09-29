@@ -121,6 +121,28 @@ async function runTests() {
     const tokenComputerA = verifyRes.json.token;
     const aliceId = verifyRes.json.user.id;
 
+    // Verify duplicate email registration is strictly rejected
+    const dupRegRes = await makeRequest('POST', '/api/auth/register', {}, {
+      name: 'Alice Duplicate',
+      email: aliceEmail,
+      password: 'AnotherPassword123!'
+    });
+    assert(dupRegRes.status === 400 && dupRegRes.json && dupRegRes.json.error && dupRegRes.json.error.includes('already exists'), 'Duplicate email registration is strictly rejected');
+
+    // Verify login with unknown email is strictly rejected
+    const unknownLoginRes = await makeRequest('POST', '/api/auth/login', {}, {
+      email: 'nonexistent_user@velora.com',
+      password: 'SomePassword123!'
+    });
+    assert(unknownLoginRes.status === 401 && unknownLoginRes.json && unknownLoginRes.json.error && unknownLoginRes.json.error.includes('No account found'), 'Login with non-existent email is rejected');
+
+    // Verify login with wrong password is strictly rejected
+    const wrongPassLoginRes = await makeRequest('POST', '/api/auth/login', {}, {
+      email: aliceEmail,
+      password: 'WrongPassword123!'
+    });
+    assert(wrongPassLoginRes.status === 401 && wrongPassLoginRes.json && wrongPassLoginRes.json.error && wrongPassLoginRes.json.error.includes('Incorrect password'), 'Login with incorrect password is rejected');
+
     // --- 2. UPLOAD FROM COMPUTER A (Chunked Multi-part) ---
     console.log('\n--- Step 2: Upload File from Computer A ---');
     // Generate dummy movie file (6 MB across three 2MB chunks)
@@ -273,12 +295,35 @@ async function runTests() {
     });
     assert(bobStreamRes.status === 404 || bobStreamRes.status === 403, `Bob cannot stream Alice\'s file (Status ${bobStreamRes.status})`);
 
-    // --- 7. FILE DELETION SYNC ---
-    console.log('\n--- Step 7: File Deletion Multi-Device Sync ---');
-    const delRes = await makeRequest('DELETE', `/api/files/${uploadedFile.id}`, {
+    // --- 7. VERIFY PERSISTENCE ACROSS LOGOUT AND RE-LOGIN ---
+    console.log('\n--- Step 7: Persistence Across User Logout and Re-Login ---');
+    const compBLogoutRes = await makeRequest('POST', '/api/auth/logout', {
       'Authorization': `Bearer ${tokenComputerB}`
     });
-    assert(delRes.status === 200, 'Computer B deleted the file from cloud');
+    assert(compBLogoutRes.status === 200, 'User successfully logged out');
+
+    // Re-login with the same account credentials
+    const reLoginRes = await makeRequest('POST', '/api/auth/login', {}, {
+      email: aliceEmail,
+      password: alicePass
+    });
+    assert(reLoginRes.status === 200 && reLoginRes.json && reLoginRes.json.sessionToken, 'Logged back in with the same account');
+    const newSessionToken = reLoginRes.json.sessionToken;
+
+    // Check that uploaded file is still available and never lost on logout
+    const reCheckFilesRes = await makeRequest('GET', '/api/files', {
+      'Authorization': `Bearer ${newSessionToken}`
+    });
+    const preservedFile = (reCheckFilesRes.json.files || []).find(f => f.id === uploadedFile.id);
+    assert(!!preservedFile, 'Uploaded file is permanently preserved and visible after signout and re-login');
+    assert(preservedFile && preservedFile.name === fileName, 'Preserved file metadata and name match exactly');
+
+    // --- 8. FILE DELETION SYNC (Only deleted when user explicitly clicks delete) ---
+    console.log('\n--- Step 8: Explicit User File Deletion Multi-Device Sync ---');
+    const delRes = await makeRequest('DELETE', `/api/files/${uploadedFile.id}`, {
+      'Authorization': `Bearer ${newSessionToken}`
+    });
+    assert(delRes.status === 200, 'User explicitly deleted the file from cloud');
 
     // Confirm file is gone from Alice's account
     const checkFilesAfterDel = await makeRequest('GET', '/api/files', {

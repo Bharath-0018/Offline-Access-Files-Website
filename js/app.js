@@ -1034,8 +1034,15 @@
 
   global.handleLogin = async function (e) {
     e.preventDefault();
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
+    const emailEl = document.getElementById('login-email');
+    const passEl = document.getElementById('login-password');
+    const email = (emailEl ? emailEl.value : '').trim().toLowerCase();
+    const password = passEl ? passEl.value : '';
+
+    if (!email || !password) {
+      showToast('Please enter both email and password.', 'error');
+      return;
+    }
 
     try {
       const res = await api.login(email, password);
@@ -1055,9 +1062,17 @@
 
   global.handleSignup = async function (e) {
     e.preventDefault();
-    const name = document.getElementById('signup-name').value;
-    const email = document.getElementById('signup-email').value;
-    const password = document.getElementById('signup-password').value;
+    const nameEl = document.getElementById('signup-name');
+    const emailEl = document.getElementById('signup-email');
+    const passEl = document.getElementById('signup-password');
+    const name = (nameEl ? nameEl.value : '').trim();
+    const email = (emailEl ? emailEl.value : '').trim().toLowerCase();
+    const password = passEl ? passEl.value : '';
+
+    if (!name || !email || !password) {
+      showToast('Please enter your name, email, and password.', 'error');
+      return;
+    }
 
     try {
       const res = await api.register(email, password, name);
@@ -1094,8 +1109,10 @@
   global.logout = async function () {
     await api.logout();
     state.user = null;
+    state.files = [];
     updateUserHeader();
     renderCurrentView();
+    showToast('Signed out successfully. Your uploaded files remain permanently stored.', 'info');
   };
 
   function updateUserHeader() {

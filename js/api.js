@@ -230,26 +230,39 @@
       let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
       let folders = JSON.parse(localStorage.getItem('velora_offline_folders') || '[]');
 
-      // 1. Sign Up
+      // 1. Sign Up (Only allowed once per email)
       if (endpoint === '/auth/register' && method === 'POST') {
         const cleanEmail = (body.email || '').trim().toLowerCase();
-        let user = users.find(u => u.email === cleanEmail);
-        if (!user) {
-          user = {
-            id: 'user_' + Date.now(),
-            email: cleanEmail,
-            name: body.name || cleanEmail.split('@')[0],
-            storageQuotaBytes: 53687091200
-          };
-          users.push(user);
-          localStorage.setItem('velora_offline_users', JSON.stringify(users));
+        if (!cleanEmail) {
+          throw new Error('Email is required.');
         }
+        if (!body.password || body.password.length < 6) {
+          throw new Error('Password must be at least 6 characters.');
+        }
+
+        const existingUser = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        if (existingUser) {
+          throw new Error('An account with this email already exists. Please sign in.');
+        }
+
+        const newUser = {
+          id: 'user_' + Date.now(),
+          email: cleanEmail,
+          name: (body.name || cleanEmail.split('@')[0]).trim(),
+          password: body.password,
+          is_verified: true,
+          storageQuotaBytes: 53687091200,
+          created_at: Date.now()
+        };
+        users.push(newUser);
+        localStorage.setItem('velora_offline_users', JSON.stringify(users));
+
         return {
           success: true,
-          message: 'Account created! (Offline Demo Mode)',
-          userId: user.id,
-          email: user.email,
-          name: user.name,
+          message: 'Account created! Please verify with your OTP code.',
+          userId: newUser.id,
+          email: newUser.email,
+          name: newUser.name,
           otpCode: '123456'
         };
       }
@@ -257,12 +270,13 @@
       // 2. Verify OTP
       if (endpoint === '/auth/verify-otp' && method === 'POST') {
         const cleanEmail = (body.email || '').trim().toLowerCase();
-        const user = users.find(u => u.email === cleanEmail) || {
-          id: 'user_' + Date.now(),
-          email: cleanEmail,
-          name: cleanEmail.split('@')[0],
-          storageQuotaBytes: 53687091200
-        };
+        let user = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        if (!user) {
+          throw new Error('No account found with this email. Please sign up first.');
+        }
+        user.is_verified = true;
+        localStorage.setItem('velora_offline_users', JSON.stringify(users));
+
         const token = 'offline_token_' + Date.now();
         this.setAuth(token, user);
         return {
@@ -273,22 +287,50 @@
         };
       }
 
-      // 3. Login
+      // 3. Login (Must already have signed up & enter correct password)
       if (endpoint === '/auth/login' && method === 'POST') {
         const cleanEmail = (body.email || '').trim().toLowerCase();
-        let user = users.find(u => u.email === cleanEmail);
+        const inputPassword = body.password || '';
+
+        if (!cleanEmail) {
+          throw new Error('Email is required.');
+        }
+        if (!inputPassword) {
+          throw new Error('Password is required.');
+        }
+
+        let user = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
         if (!user) {
-          user = {
-            id: 'user_' + Date.now(),
-            email: cleanEmail,
-            name: cleanEmail.split('@')[0],
-            storageQuotaBytes: 53687091200
-          };
-          users.push(user);
+          throw new Error('No account found with this email. Please sign up first.');
+        }
+
+        if (user.password && user.password !== inputPassword) {
+          throw new Error('Incorrect password. Please try again.');
+        }
+
+        // If legacy user did not have a password stored, bind it now
+        if (!user.password && inputPassword) {
+          user.password = inputPassword;
           localStorage.setItem('velora_offline_users', JSON.stringify(users));
         }
+
         const token = 'offline_token_' + Date.now();
         this.setAuth(token, user);
+
+        // Bind any orphaned or unassigned files to this user account so they never disappear
+        let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        let filesChanged = false;
+        allFiles.forEach(f => {
+          if ((!f.user_id || f.user_id === 'user_offline') && user.id) {
+            f.user_id = user.id;
+            f.user_email = user.email;
+            filesChanged = true;
+          }
+        });
+        if (filesChanged) {
+          localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
+        }
+
         return {
           requiresVerification: false,
           sessionToken: token,
@@ -310,13 +352,20 @@
       // 6. Storage Stats
       if (endpoint === '/storage/stats') {
         const currentUid = this.user ? this.user.id : null;
-        const userFiles = currentUid ? files.filter(f => f.user_id === currentUid) : files;
+        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : null;
+        let userFiles = files;
+        if (currentUid || currentEmail) {
+          userFiles = files.filter(f =>
+            (currentUid && f.user_id === currentUid) ||
+            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail)
+          );
+        }
         const usedBytes = userFiles.reduce((acc, f) => acc + (f.size_bytes || 0), 0);
-        const quotaBytes = 53687091200; // 50 GB
+        const quotaBytes = (this.user && this.user.storageQuotaBytes) || 53687091200; // 50 GB
         return {
           usedBytes,
           quotaBytes,
-          freeBytes: quotaBytes - usedBytes,
+          freeBytes: Math.max(0, quotaBytes - usedBytes),
           percentUsed: Math.min(100, Math.round((usedBytes / quotaBytes) * 100)),
           fileCount: userFiles.length,
           categories: [
@@ -329,10 +378,31 @@
         };
       }
 
-      // 7. Files List
+      // 7. Files List (Always preserve user files across logout and login)
       if (endpoint.startsWith('/files') && method === 'GET') {
         const currentUid = this.user ? this.user.id : null;
-        const userFiles = currentUid ? files.filter(f => f.user_id === currentUid) : files;
+        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : null;
+
+        // Auto-adopt any orphaned offline files to current logged-in user
+        let filesChanged = false;
+        files.forEach(f => {
+          if ((!f.user_id || f.user_id === 'user_offline') && currentUid) {
+            f.user_id = currentUid;
+            f.user_email = currentEmail;
+            filesChanged = true;
+          }
+        });
+        if (filesChanged) {
+          localStorage.setItem('velora_offline_files', JSON.stringify(files));
+        }
+
+        let userFiles = files;
+        if (currentUid || currentEmail) {
+          userFiles = files.filter(f =>
+            (currentUid && f.user_id === currentUid) ||
+            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail)
+          );
+        }
         return { files: userFiles };
       }
 
@@ -353,7 +423,7 @@
         return { folder: newFolder };
       }
 
-      // 10. Delete File
+      // 10. Delete File (ONLY delete when user explicitly requests)
       if (endpoint.startsWith('/files/') && method === 'DELETE') {
         const fileId = endpoint.replace('/files/', '');
         files = files.filter(f => f.id !== fileId);
@@ -531,9 +601,13 @@
         else if (['pdf', 'doc', 'docx', 'txt', 'zip'].includes(ext)) cat = 'documents';
 
         let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        const currentUid = this.user ? this.user.id : 'user_offline';
+        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : '';
+
         const newFileRecord = {
           id: fileId,
-          user_id: this.user ? this.user.id : 'user_offline',
+          user_id: currentUid,
+          user_email: currentEmail,
           folder_id: folderId,
           name: file.name,
           original_name: file.name,
