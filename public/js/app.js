@@ -74,8 +74,12 @@
       state.ws = new WebSocket(wsUrl);
 
       state.ws.onopen = () => {
-        document.getElementById('network-status-text').textContent = 'LAN Connected';
+        document.getElementById('network-status-text').textContent = 'Cloud & LAN Connected';
         document.getElementById('network-pill').style.display = 'flex';
+        // Authenticate WebSocket connection for user-specific real-time sync
+        if (api.token) {
+          state.ws.send(JSON.stringify({ type: 'auth', token: api.token }));
+        }
       };
 
       state.ws.onmessage = (event) => {
@@ -99,7 +103,24 @@
   }
 
   function handleWebSocketMessage(msg) {
-    const { event, data } = msg;
+    const { event, data, type } = msg;
+
+    // Multi-device real-time sync events from server
+    if (event === 'file_uploaded' || event === 'file_deleted' || event === 'file_renamed') {
+      const action = event === 'file_uploaded' ? 'New file uploaded' : event === 'file_deleted' ? 'File deleted' : 'File renamed';
+      showToast(`Cloud Sync: ${action} on your account.`, 'info');
+
+      if (state.currentView === 'dashboard') {
+        loadDashboardRecentFiles();
+      } else if (state.currentView === 'files') {
+        loadFiles();
+      } else if (state.currentView === 'offline') {
+        const c = document.getElementById('view-content');
+        if (c) renderOfflineMoviesView(c);
+      }
+      loadStorageStats();
+      return;
+    }
 
     if (event === 'transfer_progress') {
       updateTransferProgressUI(data);
@@ -174,12 +195,28 @@
     container.innerHTML = `
       <div class="section-header">
         <div>
-          <h1 class="section-title">Welcome back, ${escapeHtml(state.user.name)}!</h1>
-          <p class="section-subtitle">Your personal offline cloud is running on local network. Zero internet required.</p>
+          <h1 class="section-title">Welcome to Velora, ${escapeHtml(state.user.name)}!</h1>
+          <p class="section-subtitle">Personal cloud + pendrive-style file system across all your devices.</p>
         </div>
         <div style="display:flex; gap:10px;">
-          <button class="btn-primary" onclick="window.triggerUpload()">${Icons.render('upload-cloud')} Upload File</button>
-          <button class="btn-secondary" onclick="window.navigateTo('devices')">${Icons.render('devices')} Nearby Devices</button>
+          <button class="btn-primary" onclick="window.triggerUpload()">${Icons.render('upload-cloud')} Upload to Cloud</button>
+          <button class="btn-secondary" onclick="window.navigateTo('devices')">${Icons.render('devices')} Offline Transfer</button>
+          <button class="btn-secondary" onclick="window.syncNow()">${Icons.render('refresh-cw')} Sync</button>
+        </div>
+      </div>
+
+      <!-- Cloud Sync & Multi-Device Status Bar -->
+      <div style="background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-md); padding: 14px 20px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-emerald); box-shadow: 0 0 10px var(--accent-emerald);"></span>
+          <div>
+            <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">Multi-Device Cloud Sync Active</div>
+            <div style="font-size: 0.78rem; color: var(--text-muted);">Files uploaded from Computer A appear automatically on Computer B, Mobile, and all connected devices.</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 16px; font-size: 0.82rem; color: var(--text-secondary);">
+          <span>Last Synced: <b id="dash-last-synced" style="color: var(--text-primary);">${state.lastSyncTime ? new Date(state.lastSyncTime).toLocaleTimeString() : 'Just now'}</b></span>
+          <button class="btn-secondary" style="padding: 5px 12px; font-size: 0.8rem;" onclick="window.syncNow()">${Icons.render('refresh-cw', 14)} Sync Now</button>
         </div>
       </div>
 
@@ -187,30 +224,33 @@
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-icon indigo">${Icons.render('hard-drive', 26)}</div>
-          <div>
+          <div style="flex:1;">
             <div class="stat-number" id="dash-used-storage">...</div>
-            <div class="stat-label">Personal Storage Quota</div>
+            <div class="stat-label">Storage Used (50 GB Quota)</div>
+            <div class="progress-bar-bg" style="margin-top: 8px; height: 6px;">
+              <div class="progress-bar-fill" id="dash-storage-fill" style="width: 0%;"></div>
+            </div>
           </div>
         </div>
         <div class="stat-card">
           <div class="stat-icon emerald">${Icons.render('file', 26)}</div>
           <div>
             <div class="stat-number" id="dash-file-count">...</div>
-            <div class="stat-label">Local Files Available</div>
+            <div class="stat-label">Cloud Files in Account</div>
           </div>
         </div>
         <div class="stat-card">
           <div class="stat-icon amber">${Icons.render('film', 26)}</div>
           <div>
             <div class="stat-number" id="dash-movie-count">...</div>
-            <div class="stat-label">Offline Movies & Media</div>
+            <div class="stat-label">Movies & Video Streams</div>
           </div>
         </div>
         <div class="stat-card">
           <div class="stat-icon cyan">${Icons.render('devices', 26)}</div>
           <div>
             <div class="stat-number" id="dash-device-count">...</div>
-            <div class="stat-label">Nearby Paired Devices</div>
+            <div class="stat-label">Nearby Transfer Devices</div>
           </div>
         </div>
       </div>
@@ -218,29 +258,39 @@
       <!-- Active Transfers Alert / Section -->
       <div id="dash-transfers-section" style="margin-bottom: 28px;"></div>
 
-      <!-- Primary Acceptance Test Card -->
-      <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: var(--radius-lg); padding: 22px; margin-bottom: 28px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:36px; height:36px; border-radius:8px; background:rgba(99, 102, 241, 0.2); color:var(--primary); display:flex; align-items:center; justify-content:center;">
-              ${Icons.render('shield-check', 20)}
+      <!-- Architecture Modes Card -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 28px;">
+        <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: var(--radius-lg); padding: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="color:var(--primary);">${Icons.render('cloud', 22)}</div>
+              <h3 style="font-size:1rem; font-weight:700;">1. Velora Cloud Mode</h3>
             </div>
-            <div>
-              <h3 style="font-size:1.05rem; font-weight:700;">Offline Direct P2P File Sharing Engine</h3>
-              <p style="font-size:0.8rem; color:var(--text-muted);">Transfer 1.5 GB movies between computers over Wi-Fi without pendrive, cables, or internet.</p>
-            </div>
+            <span class="badge" style="background:rgba(99, 102, 241, 0.2); color:var(--primary);">Persistent Storage</span>
           </div>
-          <span class="brand-badge">Offline Local Mode</span>
+          <p style="font-size:0.83rem; color:var(--text-secondary); line-height:1.5;">
+            Upload files (up to 2 GB+) from any computer. Your files are saved to server storage, linked to your user account, and synchronized across Computer A, Computer B, and Mobile.
+          </p>
         </div>
-        <p style="font-size:0.85rem; color:var(--text-secondary); line-height:1.5;">
-          Both devices can discover each other on the same Wi-Fi router or mobile hotspot. Files are streamed directly between disks with zero RAM overflow and full pause/resume support.
-        </p>
+
+        <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-lg); padding: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="color:var(--accent-emerald);">${Icons.render('zap', 22)}</div>
+              <h3 style="font-size:1rem; font-weight:700;">2. Offline Local Transfer Mode</h3>
+            </div>
+            <span class="badge" style="background:rgba(16, 185, 129, 0.2); color:var(--accent-emerald);">Zero Internet</span>
+          </div>
+          <p style="font-size:0.83rem; color:var(--text-secondary); line-height:1.5;">
+            When internet is not available, connect devices to the same local Wi-Fi router or mobile hotspot to discover, pair with 6-digit codes, and stream large files directly between disks.
+          </p>
+        </div>
       </div>
 
       <!-- Recent Files Section -->
       <div class="section-header" style="margin-bottom: 16px;">
-        <h2 style="font-size: 1.15rem; font-weight: 700;">Recent Offline Files</h2>
-        <a href="javascript:void(0)" onclick="window.navigateTo('files')" style="color: var(--primary); font-size: 0.85rem; text-decoration: none; font-weight: 600;">View All &rarr;</a>
+        <h2 style="font-size: 1.15rem; font-weight: 700;">My Cloud Files</h2>
+        <a href="javascript:void(0)" onclick="window.navigateTo('files')" style="color: var(--primary); font-size: 0.85rem; text-decoration: none; font-weight: 600;">View All Files &rarr;</a>
       </div>
 
       <div id="dash-recent-files" class="file-grid">
@@ -382,7 +432,7 @@
           <div class="file-card-title" title="${escapeHtml(file.original_name)}">${escapeHtml(file.original_name)}</div>
           <div class="file-card-meta">
             <span>${formatBytes(file.size_bytes)}</span>
-            <span style="color:var(--accent-emerald); font-weight:600;">✓ Offline Ready</span>
+            <span style="color:var(--accent-emerald); font-weight:600; font-size:0.75rem;">✓ Cloud Synced</span>
           </div>
           <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">
             ${formatDate(file.created_at)}
@@ -793,6 +843,26 @@
           </button>
         </div>
 
+        <!-- Velora Cloud Server Connection -->
+        <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); padding:24px;">
+          <h3 style="font-size:1.1rem; font-weight:700; margin-bottom:16px;">Velora Cloud Connection</h3>
+          <div class="form-group">
+            <label>Backend API Server URL</label>
+            <input type="text" id="setting-server-url" class="form-input" value="${escapeHtml(api.serverUrl || window.location.origin)}" placeholder="http://localhost:3000">
+            <p style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
+              Accessing from Computer B or Mobile? Set your host machine's IP (e.g. <code>http://192.168.1.50:3000</code>).
+            </p>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+            <div style="font-size:0.82rem; color:var(--text-secondary);">
+              Status: <span style="color:var(--accent-emerald); font-weight:600;">● Active</span>
+            </div>
+            <button class="btn-primary" onclick="window.saveServerUrl()">
+              Save Server URL
+            </button>
+          </div>
+        </div>
+
         <!-- Storage Quota Detail -->
         <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); padding:24px;">
           <h3 style="font-size:1.1rem; font-weight:700; margin-bottom:16px;">Storage Architecture</h3>
@@ -807,9 +877,10 @@
           </div>
 
           <div style="font-size:0.82rem; color:var(--text-secondary); line-height:1.6;">
-            • Files are stored in your private local directory: <code style="background:rgba(0,0,0,0.3); padding:2px 6px; border-radius:4px;">data/storage/${state.user.id}/</code><br>
-            • Video streams use direct filesystem chunking with zero RAM caching.<br>
-            • Quotas prevent accidental disk exhaustion.
+            • Files are stored in persistent server storage: <code style="background:rgba(0,0,0,0.3); padding:2px 6px; border-radius:4px;">data/storage/${state.user.id}/</code><br>
+            • Multi-device sync: Files uploaded on Computer A appear instantly on Computer B and Mobile.<br>
+            • Video streams use HTTP 206 partial content with zero RAM caching.<br>
+            • 50 GB default quota per account.
           </div>
         </div>
       </div>
@@ -817,6 +888,14 @@
 
     loadStorageStats();
   }
+
+  global.saveServerUrl = function () {
+    const input = document.getElementById('setting-server-url');
+    if (!input) return;
+    const url = input.value.trim();
+    api.setServerUrl(url);
+    showToast('Velora server URL saved: ' + api.getServerUrl(), 'success');
+  };
 
   // --- Auth View (Sign In / Sign Up / Offline OTP Modal) ---
   function renderAuthView(container) {
@@ -827,8 +906,8 @@
             <div class="brand-icon-wrapper" style="margin: 0 auto 12px; width:52px; height:52px;">
               ${Icons.render('cloud', 28)}
             </div>
-            <h2 style="font-size:1.45rem; font-weight:700;">OfflineAccess</h2>
-            <p style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Personal media & file sharing without the internet</p>
+            <h2 style="font-size:1.45rem; font-weight:700;">Velora</h2>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Personal cloud & pendrive file system across all your devices</p>
           </div>
 
           <!-- Auth Tabs -->
@@ -841,14 +920,14 @@
           <form id="form-login" onsubmit="window.handleLogin(event)">
             <div class="form-group">
               <label>Email Address</label>
-              <input type="email" id="login-email" class="form-input" placeholder="bharath@example.com" required>
+              <input type="email" id="login-email" class="form-input" placeholder="user@example.com" required>
             </div>
             <div class="form-group">
               <label>Password</label>
               <input type="password" id="login-password" class="form-input" placeholder="••••••••" required>
             </div>
             <button type="submit" class="btn-primary" style="width:100%; justify-content:center; padding:11px; margin-top:8px;">
-              Sign In to Personal Cloud
+              Sign In to Velora Cloud
             </button>
             <div style="text-align:center; margin-top:14px;">
               <a href="javascript:void(0)" onclick="window.promptForgotPassword()" style="font-size:0.8rem; color:var(--text-muted); text-decoration:none;">Forgot Password?</a>
@@ -866,11 +945,11 @@
               <input type="email" id="signup-email" class="form-input" placeholder="user@example.com" required>
             </div>
             <div class="form-group">
-              <label>Password (Min 8 chars)</label>
+              <label>Password (Min 6 chars)</label>
               <input type="password" id="signup-password" class="form-input" placeholder="••••••••" minlength="6" required>
             </div>
             <button type="submit" class="btn-primary" style="width:100%; justify-content:center; padding:11px; margin-top:8px;">
-              Create Personal Cloud Account
+              Create Velora Cloud Account
             </button>
           </form>
         </div>
@@ -904,6 +983,12 @@
 
       const movieCat = stats.categories.find(c => c.category === 'movies');
       if (dashMovie) dashMovie.textContent = movieCat ? movieCat.count : '0';
+
+      const dashFill = document.getElementById('dash-storage-fill');
+      if (dashFill) dashFill.style.width = `${stats.percentUsed}%`;
+
+      const dashSynced = document.getElementById('dash-last-synced');
+      if (dashSynced) dashSynced.textContent = new Date().toLocaleTimeString();
 
       // Update settings
       const setBar = document.getElementById('settings-storage-fill');
@@ -1007,6 +1092,17 @@
   }
 
   // --- File Actions & Chunked Upload ---
+  let activeUploadId = null;
+
+  global.cancelCurrentUpload = function () {
+    if (activeUploadId) {
+      api.cancelUpload(activeUploadId);
+      activeUploadId = null;
+    }
+    closeUploadProgressModal();
+    showToast('Upload cancelled.', 'info');
+  };
+
   global.triggerUpload = function () {
     const input = document.createElement('input');
     input.type = 'file';
@@ -1018,19 +1114,21 @@
 
       try {
         await api.uploadFileChunked(file, state.currentFolderId, (prog) => {
+          activeUploadId = prog.uploadId;
           const bar = document.getElementById('upload-modal-bar');
           const percent = document.getElementById('upload-modal-percent');
           const speed = document.getElementById('upload-modal-speed');
           const eta = document.getElementById('upload-modal-eta');
 
           if (bar) bar.style.width = `${prog.percent}%`;
-          if (percent) percent.textContent = `${prog.percent}% (${formatBytes(prog.uploadedBytes)} / ${formatBytes(prog.totalBytes)})`;
+          if (percent) percent.textContent = `${prog.percent}% (${formatBytes(prog.uploadedBytes)} / ${formatBytes(prog.totalBytes)}) - Chunk ${prog.chunkIndex + 1}/${prog.totalChunks}`;
           if (speed) speed.textContent = `${formatBytes(prog.speedBps)}/s`;
-          if (eta) eta.textContent = prog.etaSec > 0 ? `ETA: ${prog.etaSec}s` : 'Finalizing...';
+          if (eta) eta.textContent = prog.etaSec > 0 ? `ETA: ${prog.etaSec}s` : 'Finalizing & Verifying Checksum...';
         });
 
+        activeUploadId = null;
         closeUploadProgressModal();
-        showToast(`Uploaded "${file.name}" successfully!`, 'success');
+        showToast(`Uploaded "${file.name}" to Velora Cloud successfully!`, 'success');
         if (state.currentView === 'dashboard') {
           loadDashboardRecentFiles();
         } else if (state.currentView === 'offline') {
@@ -1041,6 +1139,7 @@
         }
         loadStorageStats();
       } catch (err) {
+        activeUploadId = null;
         closeUploadProgressModal();
         showToast('Upload failed: ' + err.message, 'error');
       }
@@ -1086,32 +1185,16 @@
       } catch (e) {}
     }
 
-    let url = null;
-    if (global.api && global.api.getFileBlobUrl) {
-      try {
-        url = await global.api.getFileBlobUrl(fileId);
-      } catch (e) {}
-    }
-    if (!url && file && file.streamUrl && !file.streamUrl.startsWith('/api')) {
-      url = file.streamUrl;
-    }
+    const downloadUrl = api.getDownloadUrl(fileId);
+    const fileName = (file && (file.original_name || file.name)) || 'download';
 
-    if (url) {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = (file && (file.original_name || file.name)) || 'download';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      return;
-    }
-
-    if (window.location.hostname.includes('vercel.app') || !api.token) {
-      showToast('File stored in browser memory.', 'info');
-      return;
-    }
-
-    window.open(`/api/files/download/${fileId}?token=${api.token || ''}`, '_blank');
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast(`Downloading "${fileName}" from Velora Cloud...`, 'info');
   };
 
   global.renameFilePrompt = async function (fileId, currentName) {

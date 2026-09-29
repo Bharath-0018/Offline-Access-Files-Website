@@ -22,13 +22,26 @@ const wsServer = new WebSocketServer();
 const discovery = new DeviceDiscovery(PORT);
 const transferEngine = new TransferEngine(wsServer);
 
+// Handle WebSocket user authentication & multi-device presence
+wsServer.on('client_message', (client, msg) => {
+  if (msg && msg.type === 'auth') {
+    const user = auth.getUserBySession(msg.token);
+    if (user) {
+      client.userId = user.id;
+      client.send({ type: 'auth_ok', userId: user.id });
+    } else {
+      client.send({ type: 'auth_fail' });
+    }
+  }
+});
+
 // Helper for sending JSON
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, Range'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Total-Chunks, Range'
   });
   res.end(JSON.stringify(data));
 }
@@ -122,7 +135,7 @@ const requestHandler = async (req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, Range'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Total-Chunks, Range'
     });
     res.end();
     return;
@@ -266,46 +279,77 @@ const requestHandler = async (req, res) => {
       const user = getAuthenticatedUser(req);
       if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
 
-      const { fileName, fileSize, folderId } = await parseJsonBody(req);
+      const { fileName, fileSize, chunkSize, folderId, clientChecksum, checksum } = await parseJsonBody(req);
       if (!fileName || !fileSize) {
         return sendJson(res, 400, { error: 'fileName and fileSize are required.' });
       }
 
-      // Check quota
-      const stats = storage.getUserStorageStats(user.id);
-      if (stats.usedBytes + fileSize > stats.quotaBytes) {
-        return sendJson(res, 400, { error: 'Storage quota exceeded. Cannot upload this file.' });
+      try {
+        const session = storage.initChunkedUpload({
+          userId: user.id,
+          fileName,
+          fileSize: parseInt(fileSize, 10),
+          chunkSize: chunkSize ? parseInt(chunkSize, 10) : undefined,
+          folderId: folderId || null,
+          clientChecksum: clientChecksum || checksum
+        });
+        return sendJson(res, 200, session);
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
       }
+    }
 
-      const session = storage.initChunkedUpload({
-        userId: user.id,
-        fileName,
-        fileSize,
-        folderId
-      });
+    if (pathname === '/api/files/chunk/status' && method === 'GET') {
+      const user = getAuthenticatedUser(req);
+      if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
 
-      return sendJson(res, 200, session);
+      const uploadId = parsedUrl.query.uploadId;
+      if (!uploadId) return sendJson(res, 400, { error: 'uploadId query parameter required' });
+
+      try {
+        const status = storage.getChunkedUploadStatus(uploadId, user.id);
+        return sendJson(res, 200, status);
+      } catch (err) {
+        return sendJson(res, 404, { error: err.message });
+      }
     }
 
     if (pathname === '/api/files/chunk/upload' && method === 'POST') {
-      const uploadId = req.headers['x-upload-id'];
+      const user = getAuthenticatedUser(req);
+      if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
+
+      const uploadId = req.headers['x-upload-id'] || parsedUrl.query.uploadId;
+      const chunkIndex = parseInt(req.headers['x-chunk-index'] || parsedUrl.query.chunkIndex || '0', 10);
       if (!uploadId) {
         return sendJson(res, 400, { error: 'Missing X-Upload-Id header.' });
       }
 
-      storage.appendUploadChunk(uploadId, req, (err, progress) => {
-        if (err) {
-          return sendJson(res, 500, { error: err.message });
-        }
-        return sendJson(res, 200, { success: true, ...progress });
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        const chunkBuffer = Buffer.concat(chunks);
+        storage.writeUploadChunk({ uploadId, userId: user.id, chunkIndex, chunkBuffer }, (err, progress) => {
+          if (err) {
+            return sendJson(res, 500, { error: err.message });
+          }
+          return sendJson(res, 200, { success: true, ...progress });
+        });
+      });
+      req.on('error', (err) => {
+        return sendJson(res, 500, { error: err.message });
       });
       return;
     }
 
     if (pathname === '/api/files/chunk/finalize' && method === 'POST') {
-      const { uploadId } = await parseJsonBody(req);
+      const user = getAuthenticatedUser(req);
+      if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
+
+      const { uploadId, clientChecksum, checksum } = await parseJsonBody(req);
       try {
-        const fileRecord = storage.finalizeChunkedUpload(uploadId);
+        const fileRecord = await storage.finalizeChunkedUpload(uploadId, user.id, clientChecksum || checksum);
+        // Real-time WebSocket synchronization across all devices of this user
+        wsServer.sendToUser(user.id, 'file_uploaded', { file: fileRecord });
         return sendJson(res, 200, { success: true, file: fileRecord });
       } catch (err) {
         return sendJson(res, 400, { error: err.message });
@@ -313,24 +357,20 @@ const requestHandler = async (req, res) => {
     }
 
     if (pathname === '/api/files/chunk/cancel' && method === 'POST') {
+      const user = getAuthenticatedUser(req);
+      if (!user) return sendJson(res, 401, { error: 'Unauthorized' });
+
       const { uploadId } = await parseJsonBody(req);
-      storage.cancelChunkedUpload(uploadId);
+      storage.cancelChunkedUpload(uploadId, user.id);
       return sendJson(res, 200, { success: true });
     }
 
     // --- Streaming Media (HTTP 206 Range for Offline Videos/Audios) ---
     if (pathname.startsWith('/api/files/stream/') && method === 'GET') {
       const fileId = pathname.replace('/api/files/stream/', '');
-      const user = getAuthenticatedUser(req) || { id: parsedUrl.query.userId };
+      const user = getAuthenticatedUser(req) || auth.getUserBySession(parsedUrl.query.token);
 
       if (!user || !user.id) {
-        // Fallback for direct <video> tags if token passed in query
-        const queryToken = parsedUrl.query.token;
-        const queryUser = auth.getUserBySession(queryToken);
-        if (queryUser) {
-          storage.streamMediaFile(queryUser.id, fileId, req.headers.range, res);
-          return;
-        }
         return sendJson(res, 401, { error: 'Unauthorized to stream media' });
       }
 
@@ -359,6 +399,7 @@ const requestHandler = async (req, res) => {
 
       try {
         const file = storage.renameFile(user.id, fileId, newName);
+        wsServer.sendToUser(user.id, 'file_renamed', { fileId, newName, file });
         return sendJson(res, 200, { file });
       } catch (e) {
         return sendJson(res, 400, { error: e.message });
@@ -373,6 +414,7 @@ const requestHandler = async (req, res) => {
       const fileId = pathname.replace('/api/files/', '');
       try {
         storage.deleteFile(user.id, fileId);
+        wsServer.sendToUser(user.id, 'file_deleted', { fileId });
         return sendJson(res, 200, { success: true });
       } catch (e) {
         return sendJson(res, 400, { error: e.message });

@@ -1,9 +1,9 @@
 @echo off
-title AetherDrop - Offline Personal Cloud & Local File Sharing
+title Velora - Personal Cloud & Pendrive-Style File System
 echo ====================================================================
-echo        AETHERDROP - OFFLINE PERSONAL CLOUD & FILE SHARING
+echo        VELORA - PERSONAL CLOUD & PENDRIVE-STYLE FILE SYSTEM
 echo ====================================================================
-echo  Zero-Internet Local Network Storage and P2P Streaming Engine
+echo  Persistent Server Storage & Multi-Device Sync + LAN Offline Mode
 echo ====================================================================
 echo.
 

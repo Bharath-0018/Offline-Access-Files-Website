@@ -192,23 +192,11 @@
 
       const isMkv = ((file.original_name || file.name || '').toLowerCase().endsWith('.mkv'));
 
-      // 1. Try to get direct stream blob URL from local storage or cache
+      // 1. Stream directly from Velora Persistent Cloud Storage using HTTP 206 Partial Content
       let streamUrl = null;
-      if (global.api && global.api.getFileBlobUrl) {
-        try {
-          streamUrl = await global.api.getFileBlobUrl(file.id);
-        } catch (e) {
-          console.warn('Could not retrieve local blob:', e);
-        }
-      }
-
-      // 2. Check if file has active blob URL
-      if (!streamUrl && file.streamUrl && !file.streamUrl.startsWith('/api')) {
-        streamUrl = file.streamUrl;
-      }
-
-      // 3. Fallback to server endpoint (for local server mode only)
-      if (!streamUrl && !window.location.hostname.includes('vercel.app')) {
+      if (global.api && global.api.getStreamUrl) {
+        streamUrl = global.api.getStreamUrl(file.id);
+      } else {
         streamUrl = `/api/files/stream/${file.id}?token=${(global.api && global.api.token) || ''}`;
       }
 

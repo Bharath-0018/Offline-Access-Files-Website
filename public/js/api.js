@@ -1,99 +1,33 @@
-// public/js/api.js - Client HTTP API, Chunked Streaming Uploader & Universal Storage Engine
+// public/js/api.js - Velora Cloud API Client & Chunked Resumable Large File Uploader
 (function (global) {
-  const API_BASE = '/api';
+  class ApiService {
+    constructor() {
+      this.serverUrl = localStorage.getItem('velora_server_url') || '';
+      this.token = localStorage.getItem('cloud_token') || null;
+      this.user = JSON.parse(localStorage.getItem('cloud_user') || 'null');
+      this.activeUploads = new Map();
+      this.isConnected = true;
+      this.lastSyncTime = null;
+    }
 
-// IndexedDB Helper for Storing Large Media Blobs in Browser
-const IDB_NAME = 'OfflineAccessStaticDB';
-const IDB_STORE = 'user_blobs';
-
-function openIDB() {
-  return new Promise((resolve, reject) => {
-    if (!window.indexedDB) return reject(new Error('IndexedDB not supported'));
-    const req = window.indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE);
+    setServerUrl(url) {
+      if (!url) {
+        this.serverUrl = '';
+        localStorage.removeItem('velora_server_url');
+      } else {
+        const cleanUrl = url.trim().replace(/\/+$/, '');
+        this.serverUrl = cleanUrl;
+        localStorage.setItem('velora_server_url', cleanUrl);
       }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+    }
 
-async function idbPutBlob(id, blob) {
-  try {
-    const db = await openIDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.put(blob, id);
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) {
-    console.warn('IDB put error:', e);
-    return false;
-  }
-}
+    getServerUrl() {
+      return this.serverUrl || window.location.origin;
+    }
 
-async function idbGetBlob(id) {
-  try {
-    const db = await openIDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.get(id);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) {
-    console.warn('IDB get error:', e);
-    return null;
-  }
-}
-
-async function idbDeleteBlob(id) {
-  try {
-    const db = await openIDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.delete(id);
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) {
-    console.warn('IDB delete error:', e);
-    return false;
-  }
-}
-
-class ApiService {
-  constructor() {
-    this.token = localStorage.getItem('cloud_token') || null;
-    this.user = JSON.parse(localStorage.getItem('cloud_user') || 'null');
-    this.activeUploads = new Map();
-    this.fileBlobCache = new Map();
-
-      // Ensure storage is initialized cleanly with NO dummy/demo files
-      try {
-        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-        // Purge any old hardcoded demo files from browser storage
-        files = files.filter(f => 
-          f && f.id &&
-          !String(f.id).startsWith('f_movie_00') &&
-          !String(f.id).startsWith('f_doc_00') &&
-          !String(f.id).startsWith('f_audio_00') &&
-          !String(f.id).startsWith('f_img_00') &&
-          !String(f.name || '').includes('Big_Buck_Bunny') &&
-          !String(f.name || '').includes('Tears_of_Steel') &&
-          !String(f.name || '').includes('Sintel')
-        );
-        localStorage.setItem('offline_files_data', JSON.stringify(files));
-      } catch (e) {
-        localStorage.setItem('offline_files_data', '[]');
-      }
+    getApiBase() {
+      const base = this.serverUrl ? `${this.serverUrl}/api` : '/api';
+      return base;
     }
 
     setAuth(token, user) {
@@ -117,10 +51,10 @@ class ApiService {
     }
 
     async request(endpoint, options = {}) {
-      const url = `${API_BASE}${endpoint}`;
+      const url = `${this.getApiBase()}${endpoint}`;
       const headers = this.getHeaders(options.headers || {});
 
-      if (options.body && typeof options.body === 'object' && !(options.body instanceof Blob)) {
+      if (options.body && typeof options.body === 'object' && !(options.body instanceof Blob) && !(options.body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(options.body);
       }
@@ -129,203 +63,33 @@ class ApiService {
 
       try {
         const res = await fetch(url, options);
+        this.isConnected = true;
+
         if (res.status === 401) {
           this.setAuth(null, null);
           window.dispatchEvent(new CustomEvent('auth:expired'));
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'Authentication session expired. Please sign in again.');
         }
-        if (res.status === 404) {
-          // Serverless / static environment fallback (e.g. Vercel static hosting)
-          return this.mockStaticRequest(endpoint, options);
-        }
+
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(data.error || `HTTP ${res.status}`);
+          throw new Error(data.error || `Server returned HTTP ${res.status}`);
         }
         return data;
       } catch (err) {
-        // Fall back to client storage when backend is not reached
-        return this.mockStaticRequest(endpoint, options);
+        if (err.name === 'AbortError') {
+          throw err;
+        }
+        if (err.message && err.message.includes('Failed to fetch')) {
+          this.isConnected = false;
+          throw new Error(`Cannot connect to Velora server at ${this.getServerUrl()}. Please verify the server is running.`);
+        }
+        throw err;
       }
     }
 
-    mockStaticRequest(endpoint, options = {}) {
-      let body = {};
-      try {
-        if (options.body && typeof options.body === 'string') {
-          body = JSON.parse(options.body);
-        } else if (options.body) {
-          body = options.body;
-        }
-      } catch (e) {}
-
-      const method = (options.method || 'GET').toUpperCase();
-
-      // Auth - current user
-      if (endpoint === '/auth/me') {
-        const user = this.user || null;
-        return { user };
-      }
-
-      // Auth - login
-      if (endpoint === '/auth/login') {
-        const email = body.email || 'user@example.com';
-        const namePart = email.split('@')[0].replace(/[._]/g, ' ');
-        const name = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-        const user = {
-          id: 'u_' + Math.random().toString(36).slice(2, 8),
-          name: name,
-          email: email,
-          role: 'owner'
-        };
-        const token = 'session_' + Date.now();
-        this.setAuth(token, user);
-        return { sessionToken: token, user };
-      }
-
-      // Auth - register
-      if (endpoint === '/auth/register') {
-        const email = body.email || 'user@example.com';
-        return {
-          success: true,
-          email: email,
-          otpCode: '849201',
-          requiresVerification: true
-        };
-      }
-
-      // Auth - verify OTP
-      if (endpoint === '/auth/verify-otp') {
-        const email = body.email || 'user@example.com';
-        const namePart = email.split('@')[0].replace(/[._]/g, ' ');
-        const name = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-        const user = {
-          id: 'u_' + Math.random().toString(36).slice(2, 8),
-          name: name,
-          email: email,
-          role: 'owner'
-        };
-        const token = 'otp_verified_' + Date.now();
-        this.setAuth(token, user);
-        return { token, user };
-      }
-
-      // Auth - logout
-      if (endpoint === '/auth/logout') {
-        this.setAuth(null, null);
-        return { success: true };
-      }
-
-      // Storage stats - accurately calculated from user's files
-      if (endpoint === '/storage/stats') {
-        const files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-        const used = files.reduce((acc, f) => acc + (f.size_bytes || 0), 0);
-        const quota = 50 * 1024 * 1024 * 1024; // 50 GB
-        const cats = [
-          { category: 'movies', count: files.filter(f => f.category === 'movies').length },
-          { category: 'documents', count: files.filter(f => f.category === 'documents').length },
-          { category: 'images', count: files.filter(f => f.category === 'images').length },
-          { category: 'audio', count: files.filter(f => f.category === 'audio').length },
-          { category: 'others', count: files.filter(f => f.category === 'others').length }
-        ];
-        return {
-          usedBytes: used,
-          quotaBytes: quota,
-          percentUsed: Math.min(100, parseFloat(((used / quota) * 100).toFixed(1))),
-          fileCount: files.length,
-          categories: cats
-        };
-      }
-
-      // Delete file
-      if (endpoint.startsWith('/files/') && method === 'DELETE') {
-        const parts = endpoint.split('/');
-        const id = parts[2];
-        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-        files = files.filter(f => f.id !== id);
-        localStorage.setItem('offline_files_data', JSON.stringify(files));
-        return { success: true };
-      }
-
-      // Rename file
-      if (endpoint.includes('/rename') && (method === 'PUT' || method === 'POST')) {
-        const parts = endpoint.split('/');
-        const id = parts[2];
-        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-        const file = files.find(f => f.id === id);
-        if (file && body.newName) {
-          file.original_name = body.newName;
-          file.name = body.newName;
-          localStorage.setItem('offline_files_data', JSON.stringify(files));
-        }
-        return { success: true };
-      }
-
-      // List files (empty by default for new users)
-      if (endpoint.startsWith('/files')) {
-        const urlObj = new URL('http://dummy' + endpoint);
-        const category = urlObj.searchParams.get('category');
-        const search = urlObj.searchParams.get('search');
-        let files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-
-        if (category && category !== 'all') {
-          files = files.filter(f => f.category === category);
-        }
-        if (search) {
-          const q = search.toLowerCase();
-          files = files.filter(f => (f.original_name || f.name || '').toLowerCase().includes(q));
-        }
-        return { files };
-      }
-
-      // Folders
-      if (endpoint.startsWith('/folders')) {
-        let folders = JSON.parse(localStorage.getItem('offline_folders_data') || '[]');
-        if (method === 'POST') {
-          const newFolder = {
-            id: 'fold_' + Date.now(),
-            name: body.name || 'New Folder',
-            parentId: body.parentId || null,
-            created_at: new Date().toISOString()
-          };
-          folders.push(newFolder);
-          localStorage.setItem('offline_folders_data', JSON.stringify(folders));
-          return { success: true, folder: newFolder };
-        }
-        if (method === 'DELETE') {
-          const id = endpoint.split('/')[2];
-          folders = folders.filter(f => f.id !== id);
-          localStorage.setItem('offline_folders_data', JSON.stringify(folders));
-          return { success: true };
-        }
-        return { folders };
-      }
-
-      // Device discovery & transfers mock fallback
-      if (endpoint === '/devices') return { devices: [] };
-      if (endpoint === '/devices/my-info') {
-        return {
-          id: 'dev_local',
-          deviceName: 'Personal Device',
-          deviceType: 'desktop',
-          ipAddress: '127.0.0.1',
-          port: 3000
-        };
-      }
-      if (endpoint === '/devices/pair') return { success: true, message: 'Paired' };
-      if (endpoint === '/devices/unpair') return { success: true, message: 'Unpaired' };
-      if (endpoint === '/transfers') return { transfers: [] };
-      if (endpoint === '/transfers/start') return { success: true, transferId: 'tr_' + Date.now() };
-
-      // Google drive mock fallback
-      if (endpoint === '/gdrive/status') return { isConnected: false, simulatedEmail: null };
-      if (endpoint === '/gdrive/connect') return { isConnected: true, simulatedEmail: body.simulatedEmail || 'user@gmail.com' };
-      if (endpoint === '/gdrive/disconnect') return { isConnected: false, simulatedEmail: null };
-      if (endpoint.includes('/gdrive/backup')) return { success: true, message: 'File queued for backup' };
-
-      return { success: true };
-    }
-
-    // --- Auth API ---
+    // --- Authentication API ---
     async register(email, password, name) {
       return this.request('/auth/register', {
         method: 'POST',
@@ -385,7 +149,7 @@ class ApiService {
       });
     }
 
-    // --- Files API ---
+    // --- Files & Storage API ---
     async getFiles(params = {}) {
       const qs = new URLSearchParams();
       if (params.category) qs.set('category', params.category);
@@ -393,7 +157,9 @@ class ApiService {
       if (params.search) qs.set('search', params.search);
       if (params.sortBy) qs.set('sortBy', params.sortBy);
       if (params.sortOrder) qs.set('sortOrder', params.sortOrder);
-      return this.request(`/files?${qs.toString()}`);
+      const res = await this.request(`/files?${qs.toString()}`);
+      this.lastSyncTime = Date.now();
+      return res;
     }
 
     async getFolders(parentId = null) {
@@ -420,33 +186,7 @@ class ApiService {
     }
 
     async deleteFile(fileId) {
-      this.fileBlobCache.delete(fileId);
-      await idbDeleteBlob(fileId);
       return this.request(`/files/${fileId}`, { method: 'DELETE' });
-    }
-
-    async getFileBlob(fileId) {
-      if (this.fileBlobCache.has(fileId)) {
-        return this.fileBlobCache.get(fileId);
-      }
-      const blob = await idbGetBlob(fileId);
-      if (blob) {
-        this.fileBlobCache.set(fileId, blob);
-        return blob;
-      }
-      return null;
-    }
-
-    async getFileBlobUrl(fileId) {
-      const blob = await this.getFileBlob(fileId);
-      if (blob) {
-        try {
-          return URL.createObjectURL(blob);
-        } catch (e) {
-          console.warn('Error creating blob url:', e);
-        }
-      }
-      return null;
     }
 
     async savePlayPosition(fileId, positionSeconds) {
@@ -460,140 +200,145 @@ class ApiService {
       return this.request('/storage/stats');
     }
 
-    // --- Chunked Large File Uploader with fallback to client storage ---
+    getDownloadUrl(fileId) {
+      return `${this.getApiBase()}/files/download/${fileId}?token=${encodeURIComponent(this.token || '')}`;
+    }
+
+    getStreamUrl(fileId) {
+      return `${this.getApiBase()}/files/stream/${fileId}?token=${encodeURIComponent(this.token || '')}`;
+    }
+
+    // --- Resumable Chunked Streaming Uploader for 1.5GB - 5GB+ Files ---
     async uploadFileChunked(file, folderId, onProgress) {
-      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB standard chunk size
       const totalSize = file.size;
+      const totalChunks = Math.ceil(totalSize / CHUNK_SIZE) || 1;
+
+      // 1. Initialize upload session on server
+      const initRes = await this.request('/files/chunk/init', {
+        method: 'POST',
+        body: {
+          fileName: file.name,
+          fileSize: totalSize,
+          folderId: folderId || null
+        }
+      });
+
+      if (!initRes || !initRes.uploadId) {
+        throw new Error('Server failed to initiate upload session.');
+      }
+
+      const uploadId = initRes.uploadId;
+      const chunkSize = initRes.chunkSize || CHUNK_SIZE;
+      const abortController = new AbortController();
+
+      this.activeUploads.set(uploadId, {
+        abortController,
+        file,
+        totalSize,
+        chunkSize,
+        totalChunks
+      });
+
+      let uploadedBytes = 0;
+      const startTime = Date.now();
+      let lastUploadedBytes = 0;
+      let lastTime = startTime;
 
       try {
-        const initRes = await this.request('/files/chunk/init', {
-          method: 'POST',
-          body: {
-            fileName: file.name,
-            fileSize: totalSize,
-            folderId: folderId || null,
-            mimeType: file.type || 'application/octet-stream'
-          }
-        });
-
-        if (!initRes || !initRes.uploadId) {
-          return this.mockStaticUpload(file, folderId, onProgress);
-        }
-
-        const uploadId = initRes.uploadId;
-        let startByte = 0;
-        let startTime = Date.now();
-        const abortController = new AbortController();
-        this.activeUploads.set(uploadId, { abortController, file });
-
-        while (startByte < totalSize) {
-          const endByte = Math.min(startByte + CHUNK_SIZE, totalSize);
-          const chunk = file.slice(startByte, endByte);
-
-          const res = await fetch(`${API_BASE}/files/chunk/upload`, {
-            method: 'POST',
-            headers: {
-              'X-Upload-Id': uploadId,
-              'Authorization': `Bearer ${this.token}`,
-              'Content-Type': 'application/octet-stream'
-            },
-            body: chunk,
-            signal: abortController.signal
-          });
-
-          if (!res.ok) {
-            throw new Error(`Chunk upload failed with HTTP ${res.status}`);
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+          if (abortController.signal.aborted) {
+            throw new Error('Upload cancelled by user.');
           }
 
-          startByte = endByte;
+          const startByte = chunkIndex * chunkSize;
+          const endByte = Math.min(startByte + chunkSize, totalSize);
+          const chunkBlob = file.slice(startByte, endByte);
+
+          // Upload chunk with retry logic
+          let chunkAttempts = 0;
+          let chunkSuccess = false;
+          let lastChunkError = null;
+
+          while (chunkAttempts < 3 && !chunkSuccess) {
+            chunkAttempts++;
+            try {
+              const res = await fetch(`${this.getApiBase()}/files/chunk/upload`, {
+                method: 'POST',
+                headers: {
+                  'X-Upload-Id': uploadId,
+                  'X-Chunk-Index': String(chunkIndex),
+                  'X-Total-Chunks': String(totalChunks),
+                  'Authorization': `Bearer ${this.token}`,
+                  'Content-Type': 'application/octet-stream'
+                },
+                body: chunkBlob,
+                signal: abortController.signal
+              });
+
+              if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${res.status}`);
+              }
+
+              chunkSuccess = true;
+            } catch (chunkErr) {
+              if (abortController.signal.aborted) throw chunkErr;
+              lastChunkError = chunkErr;
+              if (chunkAttempts < 3) {
+                // Short backoff before retrying chunk
+                await new Promise(r => setTimeout(r, 1000));
+              }
+            }
+          }
+
+          if (!chunkSuccess) {
+            throw new Error(`Chunk ${chunkIndex + 1}/${totalChunks} failed after 3 attempts: ${lastChunkError ? lastChunkError.message : 'Unknown error'}`);
+          }
+
+          uploadedBytes = endByte;
           const now = Date.now();
           const elapsedSec = (now - startTime) / 1000;
-          const speedBps = elapsedSec > 0 ? startByte / elapsedSec : 0;
-          const remainingBytes = totalSize - startByte;
+          const speedBps = elapsedSec > 0 ? uploadedBytes / elapsedSec : 0;
+          const remainingBytes = totalSize - uploadedBytes;
           const etaSec = speedBps > 0 ? Math.round(remainingBytes / speedBps) : 0;
-          const percent = Math.min(100, Math.round((startByte / totalSize) * 100));
+          const percent = Math.min(100, Math.round((uploadedBytes / totalSize) * 100));
 
           if (onProgress) {
             onProgress({
               uploadId,
               fileName: file.name,
-              uploadedBytes: startByte,
+              uploadedBytes,
               totalBytes: totalSize,
               percent,
               speedBps,
-              etaSec
+              etaSec,
+              chunkIndex,
+              totalChunks
             });
           }
         }
 
+        // 2. Finalize upload session on server and verify integrity
         const finalRes = await this.request('/files/chunk/finalize', {
           method: 'POST',
           body: { uploadId }
         });
 
         this.activeUploads.delete(uploadId);
+        this.lastSyncTime = Date.now();
         return finalRes;
       } catch (err) {
-        return this.mockStaticUpload(file, folderId, onProgress);
-      }
-    }
-
-    async mockStaticUpload(file, folderId, onProgress) {
-      const totalSize = file.size;
-      const steps = 8;
-      for (let i = 1; i <= steps; i++) {
-        await new Promise(r => setTimeout(r, 60));
-        const uploaded = Math.round((totalSize / steps) * i);
-        if (onProgress) {
-          onProgress({
-            uploadId: 'up_' + Date.now(),
-            fileName: file.name,
-            uploadedBytes: uploaded,
-            totalBytes: totalSize,
-            percent: Math.round((i / steps) * 100),
-            speedBps: 28 * 1024 * 1024,
-            etaSec: Math.max(0, steps - i)
-          });
+        if (!abortController.signal.aborted) {
+          // Attempt cancellation cleanup on server
+          this.request('/files/chunk/cancel', {
+            method: 'POST',
+            body: { uploadId }
+          }).catch(() => {});
         }
+        this.activeUploads.delete(uploadId);
+        throw err;
       }
-
-      let category = 'others';
-      const lower = file.name.toLowerCase();
-      if (file.type.startsWith('video/') || lower.endsWith('.mp4') || lower.endsWith('.mkv') || lower.endsWith('.webm') || lower.endsWith('.avi') || lower.endsWith('.mov')) {
-        category = 'movies';
-      } else if (file.type.startsWith('audio/') || lower.endsWith('.mp3') || lower.endsWith('.wav') || lower.endsWith('.flac') || lower.endsWith('.aac')) {
-        category = 'audio';
-      } else if (file.type.startsWith('image/') || lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.gif')) {
-        category = 'images';
-      } else if (file.type.includes('pdf') || lower.endsWith('.pdf') || lower.endsWith('.docx') || lower.endsWith('.doc') || lower.endsWith('.txt')) {
-        category = 'documents';
-      }
-
-      let streamUrl = '';
-      try {
-        streamUrl = URL.createObjectURL(file);
-      } catch (e) {}
-
-      const newFile = {
-        id: 'f_up_' + Date.now(),
-        name: file.name,
-        original_name: file.name,
-        size_bytes: file.size,
-        category: category,
-        mime_type: file.type || (lower.endsWith('.mkv') ? 'video/x-matroska' : 'application/octet-stream'),
-        streamUrl: streamUrl,
-        created_at: new Date().toISOString()
-      };
-
-      // Store in active cache & IndexedDB for persistent video streaming and downloading
-      this.fileBlobCache.set(newFile.id, file);
-      await idbPutBlob(newFile.id, file);
-
-      const files = JSON.parse(localStorage.getItem('offline_files_data') || '[]');
-      files.unshift(newFile);
-      localStorage.setItem('offline_files_data', JSON.stringify(files));
-
-      return { success: true, file: newFile };
     }
 
     cancelUpload(uploadId) {
@@ -601,10 +346,14 @@ class ApiService {
       if (active) {
         active.abortController.abort();
         this.activeUploads.delete(uploadId);
+        this.request('/files/chunk/cancel', {
+          method: 'POST',
+          body: { uploadId }
+        }).catch(() => {});
       }
     }
 
-    // --- Device Discovery & Transfers API ---
+    // --- Device Discovery & Offline Local Transfers API ---
     async getDevices() {
       return this.request('/devices');
     }
@@ -636,14 +385,6 @@ class ApiService {
         method: 'POST',
         body: { targetDeviceId, fileId }
       });
-    }
-
-    async pauseTransfer(transferId) {
-      return this.request(`/transfers/${transferId}/pause`, { method: 'POST' });
-    }
-
-    async resumeTransfer(transferId) {
-      return this.request(`/transfers/${transferId}/resume`, { method: 'POST' });
     }
 
     async cancelTransfer(transferId) {
