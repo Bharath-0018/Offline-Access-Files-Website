@@ -84,6 +84,28 @@
       this.lastSyncTime = null;
       this.fallbackMode = false;
       this.blobUrlCache = new Map();
+
+      // Initialize GunDB Decentralized Realtime Cloud Peer Network
+      this.gun = null;
+      if (typeof window !== 'undefined' && window.Gun) {
+        try {
+          this.gun = window.Gun({
+            peers: [
+              'https://gun-manhattan.herokuapp.com/gun',
+              'https://peer.wall.org/gun',
+              'https://relay.peer.ooo/gun'
+            ],
+            localStorage: false
+          });
+          console.log('[Velora] Decentralized Global Cloud Peer Sync online.');
+        } catch (e) {
+          console.warn('[Velora] Gun init error:', e);
+        }
+      }
+
+      if (this.user && this.user.email) {
+        this.startGunFileSync(this.user.email);
+      }
     }
 
     setServerUrl(url) {
@@ -112,10 +134,125 @@
       if (token) {
         localStorage.setItem('cloud_token', token);
         localStorage.setItem('cloud_user', JSON.stringify(user));
+        if (user && user.email) {
+          this.startGunFileSync(user.email);
+        }
       } else {
         localStorage.removeItem('cloud_token');
         localStorage.removeItem('cloud_user');
       }
+    }
+
+    startGunFileSync(email) {
+      if (!this.gun || !email) return;
+      const cleanEmail = email.trim().toLowerCase();
+      try {
+        this.gun.get('velora_cloud_files_v3_' + cleanEmail).map().on((fileData, fileKey) => {
+          let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+          if (!fileData) {
+            const beforeLen = localFiles.length;
+            localFiles = localFiles.filter(f => f.id !== fileKey);
+            if (localFiles.length !== beforeLen) {
+              localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+              window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+            }
+            return;
+          }
+          try {
+            const record = typeof fileData === 'string' ? JSON.parse(fileData) : fileData;
+            if (record && record.id) {
+              const existingIdx = localFiles.findIndex(f => f.id === record.id);
+              if (existingIdx >= 0) {
+                localFiles[existingIdx] = { ...localFiles[existingIdx], ...record };
+              } else {
+                localFiles.unshift(record);
+              }
+              localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+              window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+            }
+          } catch(e) {}
+        });
+      } catch(e) {
+        console.warn('Gun file sync error:', e);
+      }
+    }
+
+    async fetchGunFiles(email) {
+      if (!this.gun || !email) return;
+      const cleanEmail = email.trim().toLowerCase();
+      return new Promise((resolve) => {
+        let count = 0;
+        const timer = setTimeout(() => resolve(), 2200);
+        this.gun.get('velora_cloud_files_v3_' + cleanEmail).map().once((fileData) => {
+          if (!fileData) return;
+          try {
+            const record = typeof fileData === 'string' ? JSON.parse(fileData) : fileData;
+            if (record && record.id) {
+              let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+              const existingIdx = localFiles.findIndex(f => f.id === record.id);
+              if (existingIdx >= 0) {
+                localFiles[existingIdx] = { ...localFiles[existingIdx], ...record };
+              } else {
+                localFiles.unshift(record);
+              }
+              localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+              count++;
+            }
+          } catch(e) {}
+        });
+        setTimeout(() => {
+          if (count > 0) {
+            window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+          }
+          resolve();
+        }, 1200);
+      });
+    }
+
+    async uploadToCloudHost(file, onProgress) {
+      return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const startTime = Date.now();
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) {
+            const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = elapsed > 0 ? e.loaded / elapsed : 0;
+            const remaining = e.total - e.loaded;
+            const eta = speed > 0 ? Math.round(remaining / speed) : 0;
+            onProgress({
+              percent,
+              uploadedBytes: e.loaded,
+              totalBytes: e.total,
+              speedBps: speed,
+              etaSec: eta
+            });
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const res = JSON.parse(xhr.responseText);
+              if (res && res.data && res.data.url) {
+                const directUrl = res.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+                resolve({ directUrl, rawUrl: res.data.url });
+                return;
+              }
+            } catch(e) {}
+          }
+          resolve(null);
+        };
+
+        xhr.onerror = () => resolve(null);
+        xhr.ontimeout = () => resolve(null);
+        xhr.timeout = 300000; // 5 min timeout
+        xhr.open('POST', 'https://tmpfiles.org/api/v1/upload', true);
+        xhr.send(formData);
+      });
     }
 
     getHeaders(extra = {}) {
@@ -257,6 +394,12 @@
         users.push(newUser);
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
+        if (this.gun) {
+          try {
+            this.gun.get('velora_cloud_users_v3').get(cleanEmail).put(JSON.stringify(newUser));
+          } catch(e) {}
+        }
+
         return {
           success: true,
           message: 'Account created! Please verify with your OTP code.',
@@ -300,6 +443,34 @@
         }
 
         let user = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        
+        // If account not found locally in this browser, fetch from GunDB Cloud!
+        if (!user && this.gun) {
+          try {
+            user = await new Promise((resolve) => {
+              let done = false;
+              const timer = setTimeout(() => {
+                if (!done) { done = true; resolve(null); }
+              }, 2500);
+              this.gun.get('velora_cloud_users_v3').get(cleanEmail).once((data) => {
+                if (!done && data) {
+                  done = true;
+                  clearTimeout(timer);
+                  try {
+                    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+                    if (parsed && parsed.email) resolve(parsed);
+                    else resolve(null);
+                  } catch(e) { resolve(null); }
+                }
+              });
+            });
+            if (user) {
+              users.push(user);
+              localStorage.setItem('velora_offline_users', JSON.stringify(users));
+            }
+          } catch(e) {}
+        }
+
         if (!user) {
           throw new Error('No account found with this email. Please sign up first.');
         }
@@ -322,9 +493,21 @@
         }
         user.activeFriendsCount = user.sessions.length;
         user.maxAllowedFriends = 5;
+
+        // Save updated sessions locally and to GunDB
+        const uIdx = users.findIndex(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        if (uIdx >= 0) users[uIdx] = user;
+        else users.push(user);
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
+        if (this.gun) {
+          try {
+            this.gun.get('velora_cloud_users_v3').get(cleanEmail).put(JSON.stringify(user));
+          } catch(e) {}
+        }
+
         this.setAuth(token, user);
+        this.startGunFileSync(cleanEmail);
 
         // Bind any orphaned or unassigned files to this user account so they never disappear
         let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
@@ -415,6 +598,11 @@
           localStorage.setItem('velora_offline_files', JSON.stringify(files));
         }
 
+        // Fetch peer cloud files if Gun is active
+        if (this.gun && currentEmail) {
+          this.fetchGunFiles(currentEmail).catch(() => {});
+        }
+
         let userFiles = files;
         if (currentUid || currentEmail) {
           userFiles = files.filter(f =>
@@ -445,9 +633,16 @@
       // 10. Delete File (ONLY delete when user explicitly requests)
       if (endpoint.startsWith('/files/') && method === 'DELETE') {
         const fileId = endpoint.replace('/files/', '');
+        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : '';
         files = files.filter(f => f.id !== fileId);
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
         idbDeleteBlob(fileId);
+
+        if (this.gun && currentEmail) {
+          try {
+            this.gun.get('velora_cloud_files_v3_' + currentEmail).get(fileId).put(null);
+          } catch(e) {}
+        }
         return { success: true };
       }
 
@@ -568,6 +763,11 @@
 
     getDownloadUrl(fileId) {
       if (this.fallbackMode) {
+        const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        const file = files.find(f => f.id === fileId);
+        if (file && file.cloud_url) {
+          return file.cloud_url;
+        }
         return `javascript:window.downloadOfflineBlob('${fileId}')`;
       }
       const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
@@ -576,7 +776,15 @@
 
     getStreamUrl(fileId) {
       if (this.fallbackMode) {
-        return this.blobUrlCache.get(fileId) || '';
+        if (this.blobUrlCache.has(fileId)) {
+          return this.blobUrlCache.get(fileId);
+        }
+        const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        const file = files.find(f => f.id === fileId);
+        if (file && (file.stream_url || file.cloud_url)) {
+          return file.stream_url || file.cloud_url;
+        }
+        return '';
       }
       const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
       return `${this.getApiBase()}/files/stream/${fileId}${token}`;
@@ -607,7 +815,7 @@
 
       // If running in browser fallback mode (GitHub Pages without running backend)
       if (this.fallbackMode || !this.isConnected) {
-        const fileId = 'file_' + Date.now();
+        const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
         await idbPutBlob(fileId, file);
         const blobUrl = URL.createObjectURL(file);
         this.blobUrlCache.set(fileId, blobUrl);
@@ -619,7 +827,6 @@
         else if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(ext)) cat = 'audio';
         else if (['pdf', 'doc', 'docx', 'txt', 'zip'].includes(ext)) cat = 'documents';
 
-        let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         const currentUid = this.user ? this.user.id : 'user_offline';
         const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : '';
 
@@ -634,12 +841,50 @@
           mime_type: file.type || 'application/octet-stream',
           size_bytes: totalSize,
           created_at: Date.now(),
-          updated_at: Date.now()
+          updated_at: Date.now(),
+          cloud_url: null,
+          stream_url: blobUrl
         };
+
+        // Attempt direct cloud upload to tmpfiles.org for worldwide streaming/download without local server
+        let cloudUploaded = false;
+        try {
+          const cloudRes = await this.uploadToCloudHost(file, (prog) => {
+            if (onProgress) {
+              onProgress({
+                uploadId: fileId,
+                fileName: file.name,
+                percent: prog.percent,
+                uploadedBytes: prog.uploadedBytes,
+                totalBytes: totalSize,
+                speedBps: prog.speedBps,
+                etaSec: prog.etaSec,
+                chunkIndex: 0,
+                totalChunks: 1
+              });
+            }
+          });
+          if (cloudRes && cloudRes.directUrl) {
+            newFileRecord.cloud_url = cloudRes.directUrl;
+            newFileRecord.stream_url = cloudRes.directUrl;
+            cloudUploaded = true;
+          }
+        } catch(cloudErr) {
+          console.warn('[Velora] Cloud host upload notice:', cloudErr);
+        }
+
+        let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         files.unshift(newFileRecord);
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
 
-        if (onProgress) {
+        // Sync file metadata across peers in real-time
+        if (this.gun && currentEmail) {
+          try {
+            this.gun.get('velora_cloud_files_v3_' + currentEmail).get(fileId).put(JSON.stringify(newFileRecord));
+          } catch(e) {}
+        }
+
+        if (onProgress && !cloudUploaded) {
           onProgress({
             uploadId: fileId,
             fileName: file.name,
@@ -813,13 +1058,27 @@
 
   // Global helper for offline blob downloads
   global.downloadOfflineBlob = async function (fileId) {
+    const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+    const file = files.find(f => f.id === fileId);
+    if (file && file.cloud_url) {
+      const a = document.createElement('a');
+      a.href = file.cloud_url;
+      a.download = file.original_name || file.name || 'download';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
     const blob = await idbGetBlob(fileId);
-    if (!blob) return alert('File data not found in local storage.');
+    if (!blob) return alert('File data not found in local storage. It may still be syncing from the cloud.');
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileId;
+    a.download = (file && (file.original_name || file.name)) || fileId;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 

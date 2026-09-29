@@ -964,28 +964,21 @@
             </button>
           </form>
 
-          <!-- Multi-Device Connection Card for Computer B -->
+          <!-- Long-Distance Multi-Device Peer Cloud Card -->
           <div style="margin-top:20px; padding:14px; background:linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8)); border:1px solid rgba(99, 102, 241, 0.3); border-radius:var(--radius-md); font-size:0.78rem;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
               <span style="color:var(--text-primary); font-weight:600; display:flex; align-items:center; gap:6px;">
-                ${Icons.render('laptop', 16, 'text-primary')} Connecting from Computer B or Mobile?
+                ${Icons.render('globe', 16, 'text-primary')} Long-Distance Multi-Device Access
               </span>
-              <span id="server-status-pill" class="badge" style="background:${api.isConnected ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}; color:${api.isConnected ? 'var(--accent-emerald)' : 'var(--accent-rose)'}; font-size:0.7rem;">
-                ${api.isConnected ? '● Connected' : '● Standalone'}
+              <span class="badge" style="background:rgba(16, 185, 129, 0.2); color:var(--accent-emerald); font-size:0.7rem;">
+                ● Cloud Peer Sync Ready
               </span>
             </div>
-            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px; line-height:1.4;">
-              To access accounts & files created on Computer A, connect to Computer A's Velora host IP (e.g. <code>http://192.168.1.15:3000</code>).
+            <p style="font-size:0.76rem; color:var(--text-secondary); margin-bottom:0; line-height:1.5;">
+              🌐 <strong>Any Distance:</strong> Access from Coimbatore, Dindigul, or anywhere in the world.<br>
+              👥 <strong>Up to 5 Friends:</strong> Log in with the same Email & Password simultaneously.<br>
+              ⚡ <strong>Zero Setup:</strong> Direct login & file streaming without batch files or server setup!
             </p>
-            <div style="display:flex; gap:6px;">
-              <input type="text" id="auth-server-input" class="form-input" style="padding:6px 10px; font-size:0.76rem;" value="${escapeHtml(api.getServerUrl())}" placeholder="http://192.168.1.X:3000">
-              <button type="button" class="btn-primary" style="padding:6px 12px; font-size:0.76rem; white-space:nowrap;" onclick="window.saveAuthServerUrl()">Connect</button>
-            </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
-              <a href="javascript:void(0)" onclick="window.promptImportAccountSync()" style="font-size:0.74rem; color:var(--accent-cyan); text-decoration:none; font-weight:500; display:flex; align-items:center; gap:4px;">
-                ${Icons.render('copy', 13)} Have an Account Sync Link / Key? Click to Import
-              </a>
-            </div>
           </div>
         </div>
       </div>
@@ -1347,7 +1340,7 @@
 
     const inputUrl = document.getElementById('modal-friends-server-url');
     if (inputUrl) {
-      inputUrl.value = api.getServerUrl() || window.location.origin;
+      inputUrl.value = window.location.href.split('?')[0].split('#')[0];
     }
 
     modal.classList.add('open');
@@ -1355,8 +1348,7 @@
 
   global.closeFriendsModal = function () {
     const modal = document.getElementById('modal-friends-access');
-    if (!modal) return;
-    modal.classList.remove('open');
+    if (modal) modal.classList.remove('open');
   };
 
   global.copyFriendsUrl = function () {
@@ -1619,6 +1611,21 @@
 
   // Initialize App on DOM Load
   document.addEventListener('DOMContentLoaded', async () => {
+    // Realtime Peer Cloud File Sync updates
+    window.addEventListener('velora:cloud_synced', () => {
+      if (state.user) {
+        if (state.currentView === 'dashboard') {
+          loadDashboardRecentFiles();
+        } else if (state.currentView === 'files') {
+          loadFiles();
+        } else if (state.currentView === 'offline') {
+          const c = document.getElementById('view-content');
+          if (c) renderOfflineMoviesView(c);
+        }
+        loadStorageStats();
+      }
+    });
+
     videoPlayer.init();
     initWebSocket();
 
