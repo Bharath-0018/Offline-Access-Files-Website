@@ -10,9 +10,18 @@ echo  Location 1: Dindigul (Your PC)
 echo  Location 2: Coimbatore (Your 5 Friends' PCs / Mobiles)
 echo.
 echo  Step 1: Starting local Velora Cloud Server on Port 3000...
-start /b "" agy-node server.js 2>nul || start /b "" node server.js 2>nul
+
+set "NODE_CMD="
+if exist "%APPDATA%\Antigravity\bin\agy-node.cmd" (
+    set "NODE_CMD=%APPDATA%\Antigravity\bin\agy-node.cmd"
+) else (
+    set "NODE_CMD=node"
+)
+
+start /b "" "%NODE_CMD%" server.js
 timeout /t 3 >nul
 
+echo.
 echo  Step 2: Connecting to Worldwide HTTPS Tunnel (pinggy.io / localhost.run)...
 echo.
 echo  ===============================================================================
