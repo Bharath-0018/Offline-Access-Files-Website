@@ -199,14 +199,26 @@
         streamUrl = global.api.getStreamUrl(file.id);
       }
 
-      // If streamUrl is invalid, expired, or a dead blob from another browser, fallback to permanent stream
-      if (!streamUrl || streamUrl.includes('tmpfiles.org') || streamUrl.includes('expired') || (streamUrl.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)))) {
-        if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://')) && !file.cloud_url.includes('tmpfiles.org') && !file.cloud_url.includes('expired')) {
+      const permanentVid = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+      const isBad = (url) => {
+        if (!url || typeof url !== 'string') return true;
+        const l = url.toLowerCase();
+        return l.includes('tmpfiles.org') ||
+               l.includes('pinggy') ||
+               l.includes('localhost.run') ||
+               l.includes('ngrok') ||
+               l.includes('expired') ||
+               l.includes('invalid') ||
+               (l.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)));
+      };
+
+      if (isBad(streamUrl)) {
+        if (file.cloud_url && !isBad(file.cloud_url)) {
           streamUrl = file.cloud_url;
         } else if (file.data_url) {
           streamUrl = file.data_url;
         } else {
-          streamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+          streamUrl = permanentVid;
         }
       }
 

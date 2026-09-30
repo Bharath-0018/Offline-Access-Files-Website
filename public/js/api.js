@@ -108,18 +108,33 @@
     return { users: [], files: [], deleted_ids: [] };
   }
 
+  function isBadUrl(url) {
+    if (!url || typeof url !== 'string') return true;
+    const l = url.toLowerCase();
+    return l.includes('tmpfiles.org') ||
+           l.includes('pinggy') ||
+           l.includes('localhost.run') ||
+           l.includes('ngrok') ||
+           l.includes('expired') ||
+           l.includes('invalid') ||
+           (l.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(url)));
+  }
+
   function sanitizeFile(f) {
     if (!f) return f;
-    const isVid = f.category === 'movies' || (f.mime_type && f.mime_type.startsWith('video/'));
+    const isVid = f.category === 'movies' || f.category === 'videos' || (f.mime_type && f.mime_type.startsWith('video/'));
     const permanentVid = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-    if (f.cloud_url && (f.cloud_url.includes('tmpfiles.org') || f.cloud_url.includes('expired'))) {
+    if (isBadUrl(f.cloud_url)) {
       f.cloud_url = isVid ? permanentVid : null;
     }
-    if (f.stream_url && (f.stream_url.includes('tmpfiles.org') || f.stream_url.includes('expired'))) {
+    if (isBadUrl(f.stream_url)) {
       f.stream_url = isVid ? permanentVid : null;
     }
-    if (isVid && !f.cloud_url) {
+    if (isVid && (!f.cloud_url || isBadUrl(f.cloud_url))) {
       f.cloud_url = permanentVid;
+    }
+    if (isVid && (!f.stream_url || isBadUrl(f.stream_url))) {
+      f.stream_url = permanentVid;
     }
     return f;
   }
@@ -238,12 +253,31 @@
 
   class ApiService {
     constructor() {
+      // Auto-purge any stale pinggy / tunnel / expired server URLs from localStorage
+      try {
+        const saved = localStorage.getItem('velora_server_url');
+        if (saved && isBadUrl(saved)) {
+          localStorage.removeItem('velora_server_url');
+        }
+        let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        let modified = false;
+        localFiles = localFiles.map(f => {
+          const cleaned = sanitizeFile(f);
+          if (cleaned.cloud_url !== f.cloud_url || cleaned.stream_url !== f.stream_url) modified = true;
+          return cleaned;
+        });
+        if (modified) {
+          localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+        }
+      } catch(e) {}
+
       const isStaticHost = window.location.hostname.includes('github.io') ||
+                           window.location.hostname.includes('vercel.app') ||
                            window.location.protocol === 'file:' ||
                            (window.location.port !== '3000' && window.location.port !== '');
 
       const savedUrl = localStorage.getItem('velora_server_url');
-      if (savedUrl) {
+      if (savedUrl && !isBadUrl(savedUrl)) {
         this.serverUrl = savedUrl.replace(/\/+$/, '');
         this.fallbackMode = false;
       } else if (isStaticHost) {
@@ -1039,52 +1073,56 @@
     }
 
     getDownloadUrl(fileId) {
-      if (this.fallbackMode) {
-        const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-        const file = files.find(f => f.id === fileId);
-        if (file) {
-          if (file.data_url) return file.data_url;
-          if (file.cloud_url && !file.cloud_url.includes('tmpfiles.org') && !file.cloud_url.includes('expired')) return file.cloud_url;
-          if (file.stream_url && !file.stream_url.startsWith('blob:') && !file.stream_url.includes('tmpfiles.org') && !file.stream_url.includes('expired')) return file.stream_url;
-          if (file.category === 'movies' || (file.mime_type && file.mime_type.startsWith('video/'))) {
-            return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-          }
-        }
-        return `javascript:window.downloadOfflineBlob('${fileId}')`;
+      const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+      const file = files.find(f => f.id === fileId);
+      const isVid = file && (file.category === 'movies' || file.category === 'videos' || (file.mime_type && file.mime_type.startsWith('video/')));
+      const permanentVid = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+
+      if (file) {
+        if (file.data_url) return file.data_url;
+        if (file.cloud_url && !isBadUrl(file.cloud_url)) return file.cloud_url;
+        if (file.stream_url && !isBadUrl(file.stream_url)) return file.stream_url;
+        if (isVid) return permanentVid;
       }
-      const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
-      return `${this.getApiBase()}/files/download/${fileId}${token}`;
+
+      if (this.serverUrl && !isBadUrl(this.serverUrl) && !this.fallbackMode) {
+        const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+        return `${this.getApiBase()}/files/download/${fileId}${token}`;
+      }
+
+      return `javascript:window.downloadOfflineBlob('${fileId}')`;
     }
 
     getStreamUrl(fileId) {
-      if (this.fallbackMode) {
-        if (this.blobUrlCache.has(fileId)) {
-          return this.blobUrlCache.get(fileId);
-        }
-        const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-        const file = files.find(f => f.id === fileId);
-        if (file) {
-          // Priority 1: High-availability direct Cloud URL (Accessible anywhere, e.g. Coimbatore!)
-          if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://')) && !file.cloud_url.includes('tmpfiles.org') && !file.cloud_url.includes('expired')) {
-            return file.cloud_url;
-          }
-          // Priority 2: Stream URL if it's an online HTTP/HTTPS link
-          if (file.stream_url && (file.stream_url.startsWith('http://') || file.stream_url.startsWith('https://')) && !file.stream_url.startsWith('blob:') && !file.stream_url.includes('tmpfiles.org') && !file.stream_url.includes('expired')) {
-            return file.stream_url;
-          }
-          // Priority 3: Data URL (Instant local Base64 streaming)
-          if (file.data_url) {
-            return file.data_url;
-          }
-          // Priority 4: Guaranteed Permanent High-Speed Video Stream (NEVER EXPIRES)
-          if (file.category === 'movies' || (file.mime_type && file.mime_type.startsWith('video/'))) {
-            return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-          }
-        }
-        return '';
+      if (this.blobUrlCache.has(fileId)) {
+        return this.blobUrlCache.get(fileId);
       }
-      const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
-      return `${this.getApiBase()}/files/stream/${fileId}${token}`;
+      const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+      const file = files.find(f => f.id === fileId);
+      const isVid = file && (file.category === 'movies' || file.category === 'videos' || (file.mime_type && file.mime_type.startsWith('video/')));
+      const permanentVid = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+
+      if (file) {
+        if (file.cloud_url && !isBadUrl(file.cloud_url)) {
+          return file.cloud_url;
+        }
+        if (file.stream_url && !isBadUrl(file.stream_url)) {
+          return file.stream_url;
+        }
+        if (file.data_url) {
+          return file.data_url;
+        }
+        if (isVid) {
+          return permanentVid;
+        }
+      }
+
+      if (this.serverUrl && !isBadUrl(this.serverUrl) && !this.fallbackMode) {
+        const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+        return `${this.getApiBase()}/files/stream/${fileId}${token}`;
+      }
+
+      return isVid ? permanentVid : '';
     }
 
     // --- Resumable 5MB Chunk Streaming Uploader ---
@@ -1380,15 +1418,16 @@
 
   // Global helper for offline and cloud blob downloads (Permanent, Never Expires)
   global.downloadOfflineBlob = async function (fileId) {
+    const permanentVid = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
     const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
     const file = files.find(f => f.id === fileId);
     if (file) {
-      let downloadLink = file.data_url;
-      if (!downloadLink && file.cloud_url && !file.cloud_url.includes('tmpfiles.org') && !file.cloud_url.includes('expired')) {
-        downloadLink = file.cloud_url;
-      }
-      if (!downloadLink && (file.category === 'movies' || (file.mime_type && file.mime_type.startsWith('video/')))) {
-        downloadLink = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+      let downloadLink = null;
+      if (file.data_url) downloadLink = file.data_url;
+      else if (file.cloud_url && !isBadUrl(file.cloud_url)) downloadLink = file.cloud_url;
+      else if (file.stream_url && !isBadUrl(file.stream_url)) downloadLink = file.stream_url;
+      else if (file.category === 'movies' || file.category === 'videos' || (file.mime_type && file.mime_type.startsWith('video/'))) {
+        downloadLink = permanentVid;
       }
       if (downloadLink) {
         const a = document.createElement('a');
