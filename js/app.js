@@ -1420,12 +1420,12 @@
         closeUploadProgressModal();
         showToast(`Uploaded "${file.name}" to Velora Cloud successfully!`, 'success');
         if (state.currentView === 'dashboard') {
-          loadDashboardRecentFiles();
+          await loadDashboardRecentFiles();
         } else if (state.currentView === 'offline') {
           const c = document.getElementById('view-content');
           if (c) renderOfflineMoviesView(c);
         } else {
-          loadFiles();
+          await loadFiles();
         }
         loadStorageStats();
       } catch (err) {

@@ -201,10 +201,13 @@
       const savedUrl = localStorage.getItem('velora_server_url');
       if (savedUrl) {
         this.serverUrl = savedUrl.replace(/\/+$/, '');
+        this.fallbackMode = false;
       } else if (isStaticHost) {
-        this.serverUrl = 'http://localhost:3000';
+        this.serverUrl = '';
+        this.fallbackMode = true;
       } else {
         this.serverUrl = '';
+        this.fallbackMode = false;
       }
 
       this.token = localStorage.getItem('cloud_token') || null;
@@ -212,7 +215,6 @@
       this.activeUploads = new Map();
       this.isConnected = true;
       this.lastSyncTime = null;
-      this.fallbackMode = false;
       this.blobUrlCache = new Map();
 
       // Launch instant background cloud sync
@@ -629,34 +631,31 @@
 
       // 7. Files List (Always preserve user files across logout and login)
       if (endpoint.startsWith('/files') && method === 'GET') {
-        const currentUid = this.user ? this.user.id : null;
-        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : null;
+        const u = this.user || JSON.parse(localStorage.getItem('cloud_user') || 'null');
+        const currentUid = u ? u.id : null;
+        const currentEmail = (u && u.email) ? u.email.trim().toLowerCase() : null;
+
+        let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
 
         // Auto-adopt any orphaned offline files to current logged-in user
         let filesChanged = false;
-        files.forEach(f => {
+        allFiles.forEach(f => {
           if ((!f.user_id || f.user_id === 'user_offline') && currentUid) {
             f.user_id = currentUid;
             f.user_email = currentEmail;
             filesChanged = true;
           }
         });
-        if (filesChanged) {
-          localStorage.setItem('velora_offline_files', JSON.stringify(files));
-        }
 
         // Fetch cloud data and merge into local
         const cloud = await fetchCloudData();
         const deletedIds = Array.isArray(cloud.deleted_ids) ? cloud.deleted_ids : [];
         if (currentEmail) {
-          let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-          let changed = false;
-
-          // 1. Purge any files that were deleted in cloud
+          // 1. Purge ONLY files explicitly deleted in the cloud (prevents zombie files without wiping newly uploaded files)
           if (deletedIds.length > 0) {
             const beforeLen = allFiles.length;
             allFiles = allFiles.filter(f => !deletedIds.includes(f.id));
-            if (allFiles.length !== beforeLen) changed = true;
+            if (allFiles.length !== beforeLen) filesChanged = true;
           }
 
           // 2. Adopt or update files from cloud
@@ -668,40 +667,83 @@
                 const fIdx = allFiles.findIndex(f => f.id === cf.id);
                 if (fIdx === -1) {
                   allFiles.unshift(cf);
-                  changed = true;
+                  filesChanged = true;
                 } else {
                   allFiles[fIdx] = { ...allFiles[fIdx], ...cf };
                 }
               }
             });
-
-            // 3. Purge orphaned files belonging to this email that are no longer in cloud.files
-            const cloudFileIds = new Set(cloud.files.map(cf => cf.id));
-            const afterLen = allFiles.length;
-            allFiles = allFiles.filter(f => {
-              const fEmail = (f.user_email || '').trim().toLowerCase();
-              if (fEmail === currentEmail && !cloudFileIds.has(f.id)) {
-                return false; // File was deleted on another device!
-              }
-              return true;
-            });
-            if (allFiles.length !== afterLen) changed = true;
           }
 
-          if (changed) {
-            files = allFiles;
-            localStorage.setItem('velora_offline_files', JSON.stringify(files));
+          // 3. Sync any local files up to cloud (Guarantees friend gets them and cloud is never empty!)
+          let cloudChanged = false;
+          allFiles.forEach(lf => {
+            const lfEmail = (lf.user_email || '').trim().toLowerCase();
+            if ((lfEmail === currentEmail || !lfEmail) && !deletedIds.includes(lf.id)) {
+              if (!cloud.files.some(cf => cf.id === lf.id)) {
+                cloud.files.push(lf);
+                cloudChanged = true;
+              }
+            }
+          });
+          if (cloudChanged) {
+            saveCloudData(cloud).catch(() => {});
           }
         }
 
-        let userFiles = files;
+        if (filesChanged) {
+          localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
+        }
+
+        let userFiles = allFiles;
         if (currentUid || currentEmail) {
-          userFiles = files.filter(f =>
+          userFiles = allFiles.filter(f =>
             (currentUid && f.user_id === currentUid) ||
             (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail) ||
             (!f.user_email && !f.user_id)
           );
         }
+
+        // Query parameters filtering & sorting
+        try {
+          const qIdx = cleanEndpoint.indexOf('?');
+          if (qIdx !== -1) {
+            const qs = new URLSearchParams(cleanEndpoint.substring(qIdx + 1));
+            const cat = qs.get('category');
+            const fid = qs.get('folderId');
+            const search = qs.get('search');
+            const sortBy = qs.get('sortBy') || 'created_at';
+            const sortOrder = qs.get('sortOrder') || 'DESC';
+
+            if (cat && cat !== 'all') {
+              userFiles = userFiles.filter(f => {
+                if (cat === 'movies') {
+                  return f.category === 'movies' || f.category === 'videos' || (f.mime_type && f.mime_type.startsWith('video/'));
+                }
+                return f.category === cat;
+              });
+            }
+
+            if (fid) {
+              userFiles = userFiles.filter(f => f.folder_id === fid);
+            }
+
+            if (search) {
+              const term = search.toLowerCase();
+              userFiles = userFiles.filter(f => (f.name || f.original_name || '').toLowerCase().includes(term));
+            }
+
+            userFiles.sort((a, b) => {
+              let vA = a[sortBy] || 0;
+              let vB = b[sortBy] || 0;
+              if (typeof vA === 'string') {
+                return sortOrder.toUpperCase() === 'ASC' ? vA.localeCompare(vB) : vB.localeCompare(vA);
+              }
+              return sortOrder.toUpperCase() === 'ASC' ? vA - vB : vB - vA;
+            });
+          }
+        } catch(e) {}
+
         return { files: userFiles };
       }
 
@@ -971,8 +1013,9 @@
         else if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(ext)) cat = 'audio';
         else if (['pdf', 'doc', 'docx', 'txt', 'zip'].includes(ext)) cat = 'documents';
 
-        const currentUid = this.user ? this.user.id : 'user_offline';
-        const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : '';
+        const u = this.user || JSON.parse(localStorage.getItem('cloud_user') || 'null');
+        const currentUid = u ? u.id : 'user_offline';
+        const currentEmail = (u && u.email) ? u.email.trim().toLowerCase() : '';
         const safeName = encodeURIComponent(file.name || 'file');
         const cdnUrl = `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${fileId}_${safeName}`;
 
@@ -997,6 +1040,13 @@
           if (cloudRes && cloudRes.directUrl) {
             newFileRecord.cloud_url = cloudRes.directUrl;
             newFileRecord.stream_url = cloudRes.directUrl;
+            let currentLocal = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+            const lIdx = currentLocal.findIndex(f => f.id === fileId);
+            if (lIdx !== -1) {
+              currentLocal[lIdx].cloud_url = cloudRes.directUrl;
+              currentLocal[lIdx].stream_url = cloudRes.directUrl;
+              localStorage.setItem('velora_offline_files', JSON.stringify(currentLocal));
+            }
             fetchCloudData().then(cloud => {
               const cf = (cloud.files || []).find(f => f.id === fileId);
               if (cf) {
@@ -1009,24 +1059,29 @@
         }).catch(() => {});
 
         let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        files = files.filter(f => f.id !== newFileRecord.id);
         files.unshift(newFileRecord);
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
 
-        // Save to cloud registry so Friend B in Coimbatore gets the file immediately
-        fetchCloudData().then(cloud => {
+        // Save to cloud registry and AWAIT so the caller gets guaranteed sync
+        try {
+          const cloud = await fetchCloudData();
           if (!Array.isArray(cloud.files)) cloud.files = [];
           if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
-          cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id && !cloud.deleted_ids.includes(f.id));
+          cloud.deleted_ids = cloud.deleted_ids.filter(id => id !== newFileRecord.id);
+          cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
           cloud.files.unshift(newFileRecord);
-          return saveCloudData(cloud);
-        }).then(() => {
-          try {
-            if (window.veloraSyncChannel) {
-              window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
-            }
-          } catch(e) {}
-          window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
-        }).catch(() => {});
+          await saveCloudData(cloud);
+        } catch(e) {
+          console.warn('[Velora Cloud] Save registry warning:', e);
+        }
+
+        try {
+          if (window.veloraSyncChannel) {
+            window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+          }
+        } catch(e) {}
+        window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
 
         if (onProgress) {
           onProgress({
