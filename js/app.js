@@ -1413,12 +1413,14 @@
           if (bar) bar.style.width = `${prog.percent}%`;
           if (percent) percent.textContent = `${prog.percent}% (${formatBytes(prog.uploadedBytes)} / ${formatBytes(prog.totalBytes)}) - Chunk ${prog.chunkIndex + 1}/${prog.totalChunks}`;
           if (speed) speed.textContent = `${formatBytes(prog.speedBps)}/s`;
-          if (eta) eta.textContent = prog.etaSec > 0 ? `ETA: ${prog.etaSec}s` : 'Finalizing & Verifying Checksum...';
+          if (eta) eta.textContent = prog.percent >= 100 ? 'Upload Complete!' : 'Uploading at Super-Speed...';
         });
 
         activeUploadId = null;
-        closeUploadProgressModal();
-        showToast(`Uploaded "${file.name}" to Velora Cloud successfully!`, 'success');
+        setTimeout(() => {
+          closeUploadProgressModal();
+          showToast(`Uploaded "${file.name}" to Velora Cloud in seconds!`, 'success');
+        }, 150);
         if (state.currentView === 'dashboard') {
           await loadDashboardRecentFiles();
         } else if (state.currentView === 'offline') {
