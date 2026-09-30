@@ -70,7 +70,11 @@
       const res = await fetch(VELORA_CLOUD_DB_URL, { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
-        return json.data || { users: [], files: [] };
+        const d = json.data || {};
+        return {
+          users: Array.isArray(d.users) ? d.users : [],
+          files: Array.isArray(d.files) ? d.files : []
+        };
       }
     } catch (e) {
       console.warn('[Velora Cloud] Fetch registry error:', e);
@@ -80,25 +84,34 @@
 
   async function saveCloudData(data) {
     try {
-      await fetch(VELORA_CLOUD_DB_URL, {
+      const cleanData = {
+        users: Array.isArray(data.users) ? data.users : [],
+        files: Array.isArray(data.files) ? data.files : []
+      };
+      const res = await fetch(VELORA_CLOUD_DB_URL, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: 'velora_cloud_master_database_v1',
-          data
+          data: cleanData
         })
       });
+      return res.ok;
     } catch (e) {
       console.warn('[Velora Cloud] Save registry error:', e);
+      return false;
     }
   }
 
   async function syncLocalToCloud() {
     try {
-      const localUsers = JSON.parse(localStorage.getItem('velora_offline_users') || '[]');
-      const localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+      let localUsers = JSON.parse(localStorage.getItem('velora_offline_users') || '[]');
+      let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
       const cloud = await fetchCloudData();
       let changed = false;
+
+      if (!Array.isArray(cloud.users)) cloud.users = [];
+      if (!Array.isArray(cloud.files)) cloud.files = [];
 
       // 1. Sync local users up to cloud
       localUsers.forEach(lu => {
@@ -376,7 +389,7 @@
       let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
       let folders = JSON.parse(localStorage.getItem('velora_offline_folders') || '[]');
 
-      // 1. Sign Up (Only allowed once per email globally)
+      // 1. Sign Up (Or direct Sign In if already registered)
       if (endpoint === '/auth/register' && method === 'POST') {
         const cleanEmail = (body.email || '').trim().toLowerCase();
         if (!cleanEmail) {
@@ -387,15 +400,18 @@
         }
 
         const cloud = await fetchCloudData();
-        let existingUser = users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
-                           cloud.users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        let existingUser = (users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
+                           (cloud.users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
 
         if (existingUser) {
-          throw new Error('An account with this email already exists. Please sign in.');
+          if (existingUser.password && existingUser.password === body.password) {
+            return this.mockOfflineRequest('/auth/login', { method: 'POST', body: { email: cleanEmail, password: body.password } });
+          }
+          throw new Error('An account with this email already exists. Please sign in with your password.');
         }
 
         const newUser = {
-          id: 'user_' + Date.now(),
+          id: 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
           email: cleanEmail,
           name: (body.name || cleanEmail.split('@')[0]).trim(),
           password: body.password,
@@ -409,6 +425,7 @@
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
         // Save immediately to Global Cloud DB
+        if (!cloud.users) cloud.users = [];
         cloud.users.push(newUser);
         await saveCloudData(cloud);
 
@@ -456,19 +473,37 @@
 
         // Fetch latest Cloud Database so friend in Coimbatore sees the account created in Dindigul!
         const cloud = await fetchCloudData();
-        let user = cloud.users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
-                   users.find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        let user = (cloud.users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
+                   (users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
 
         if (!user) {
-          throw new Error('No account found with this email. Please sign up first.');
-        }
+          // AUTO-PROVISION FOR FRIEND LOGIN:
+          // User A shared their Email & Password with Friend B across distance.
+          // Never block with "No account found"! Automatically provision the shared account!
+          user = {
+            id: 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+            email: cleanEmail,
+            name: (cleanEmail.split('@')[0] || 'Velora User').trim(),
+            password: inputPassword,
+            is_verified: true,
+            storageQuotaBytes: 53687091200,
+            created_at: Date.now(),
+            sessions: []
+          };
+          users.push(user);
+          localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
-        if (user.password && user.password !== inputPassword) {
-          throw new Error('Incorrect password. Please try again.');
-        }
-
-        if (!user.password && inputPassword) {
-          user.password = inputPassword;
+          if (!cloud.users) cloud.users = [];
+          cloud.users.push(user);
+          await saveCloudData(cloud);
+        } else {
+          // Verify password if account exists
+          if (user.password && user.password !== inputPassword) {
+            throw new Error('Incorrect password. Please try again.');
+          }
+          if (!user.password && inputPassword) {
+            user.password = inputPassword;
+          }
         }
 
         // Support up to 5 concurrent friends/devices per email account
@@ -487,19 +522,25 @@
         else users.push(user);
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
-        const cIdx = cloud.users.findIndex(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+        const cIdx = (cloud.users || []).findIndex(u => (u.email || '').trim().toLowerCase() === cleanEmail);
         if (cIdx >= 0) cloud.users[cIdx] = user;
-        else cloud.users.push(user);
+        else {
+          if (!cloud.users) cloud.users = [];
+          cloud.users.push(user);
+        }
         saveCloudData(cloud).catch(() => {});
 
         this.setAuth(token, user);
 
-        // Instantly adopt cloud files belonging to this user
+        // Instantly adopt and import cloud files belonging to this email
         let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         if (cloud.files && cloud.files.length > 0) {
           let changed = false;
           cloud.files.forEach(cf => {
-            if ((cf.user_email || '').toLowerCase() === cleanEmail) {
+            const cfEmail = (cf.user_email || '').trim().toLowerCase();
+            if (cfEmail === cleanEmail || !cfEmail) {
+              cf.user_email = cleanEmail;
+              cf.user_id = user.id;
               const fIdx = allFiles.findIndex(f => f.id === cf.id);
               if (fIdx === -1) {
                 allFiles.unshift(cf);
@@ -591,11 +632,12 @@
 
         // Fetch cloud data and merge into local
         const cloud = await fetchCloudData();
-        if (cloud.files && cloud.files.length > 0 && currentEmail) {
+        if (Array.isArray(cloud.files) && cloud.files.length > 0 && currentEmail) {
           let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
           let changed = false;
           cloud.files.forEach(cf => {
-            if ((cf.user_email || '').toLowerCase() === currentEmail) {
+            const cfEmail = (cf.user_email || '').trim().toLowerCase();
+            if (cfEmail === currentEmail || !cfEmail) {
               const fIdx = allFiles.findIndex(f => f.id === cf.id);
               if (fIdx === -1) {
                 allFiles.unshift(cf);
@@ -615,7 +657,8 @@
         if (currentUid || currentEmail) {
           userFiles = files.filter(f =>
             (currentUid && f.user_id === currentUid) ||
-            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail)
+            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail) ||
+            (!f.user_email && !f.user_id)
           );
         }
         return { files: userFiles };
@@ -886,6 +929,7 @@
 
         // Save to cloud registry so Friend B in Coimbatore gets the file immediately
         fetchCloudData().then(cloud => {
+          if (!Array.isArray(cloud.files)) cloud.files = [];
           cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
           cloud.files.unshift(newFileRecord);
           return saveCloudData(cloud);
