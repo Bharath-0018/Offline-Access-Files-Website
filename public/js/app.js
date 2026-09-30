@@ -1475,12 +1475,20 @@
       } catch (e) {}
     }
 
-    const downloadUrl = api.getDownloadUrl(fileId);
     const fileName = (file && (file.original_name || file.name)) || 'download';
+    const downloadUrl = api.getDownloadUrl(fileId);
+
+    if (downloadUrl.startsWith('javascript:')) {
+      if (typeof window.downloadOfflineBlob === 'function') {
+        window.downloadOfflineBlob(fileId);
+      }
+      return;
+    }
 
     const a = document.createElement('a');
     a.href = downloadUrl;
     a.download = fileName;
+    a.target = '_blank';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

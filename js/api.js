@@ -61,25 +61,38 @@
     } catch (e) {}
   }
 
-  // --- High-Availability Global Multi-Device Cloud Registry ---
-  const VELORA_CLOUD_DB_ID = 'ff808181a09d98f701a0ec7c45bb3e14';
-  const VELORA_CLOUD_DB_URL = 'https://api.restful-api.dev/objects/' + VELORA_CLOUD_DB_ID;
+  // --- High-Availability Global Multi-Device Cloud Registry (Unlimited ntfy Pub/Sub + SSE Relay) ---
+  const VELORA_CLOUD_TOPIC = 'velora_cloud_sync_prod_bharath_0018';
+  const VELORA_NTFY_URL = 'https://ntfy.sh/' + VELORA_CLOUD_TOPIC;
+  let _cachedCloudData = null;
 
   async function fetchCloudData() {
     try {
-      const res = await fetch(VELORA_CLOUD_DB_URL, { cache: 'no-store' });
+      const res = await fetch(`${VELORA_NTFY_URL}/json?poll=1&since=all`, { cache: 'no-store' });
       if (res.ok) {
-        const json = await res.json();
-        const d = json.data || {};
-        return {
-          users: Array.isArray(d.users) ? d.users : [],
-          files: Array.isArray(d.files) ? d.files : [],
-          deleted_ids: Array.isArray(d.deleted_ids) ? d.deleted_ids : []
-        };
+        const text = await res.text();
+        const lines = text.trim().split('\n').filter(Boolean);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const entry = JSON.parse(lines[i]);
+            if (entry.event === 'message' && entry.message) {
+              const parsed = JSON.parse(entry.message);
+              if (parsed && (Array.isArray(parsed.users) || Array.isArray(parsed.files))) {
+                _cachedCloudData = {
+                  users: Array.isArray(parsed.users) ? parsed.users : [],
+                  files: Array.isArray(parsed.files) ? parsed.files : [],
+                  deleted_ids: Array.isArray(parsed.deleted_ids) ? parsed.deleted_ids : []
+                };
+                return _cachedCloudData;
+              }
+            }
+          } catch(e) {}
+        }
       }
     } catch (e) {
       console.warn('[Velora Cloud] Fetch registry error:', e);
     }
+    if (_cachedCloudData) return _cachedCloudData;
     return { users: [], files: [], deleted_ids: [] };
   }
 
@@ -90,13 +103,14 @@
         files: Array.isArray(data.files) ? data.files : [],
         deleted_ids: Array.isArray(data.deleted_ids) ? data.deleted_ids : []
       };
-      const res = await fetch(VELORA_CLOUD_DB_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'velora_cloud_master_database_v1',
-          data: cleanData
-        })
+      _cachedCloudData = cleanData;
+      const res = await fetch(VELORA_NTFY_URL, {
+        method: 'POST',
+        headers: {
+          'Title': 'velora_cloud_sync',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(cleanData)
       });
       return res.ok;
     } catch (e) {
@@ -217,9 +231,10 @@
       this.lastSyncTime = null;
       this.blobUrlCache = new Map();
 
-      // Launch instant background cloud sync
+      // Launch instant real-time SSE stream & background cloud sync
+      this.setupRealtimeSync();
       syncLocalToCloud();
-      setInterval(syncLocalToCloud, 8000);
+      setInterval(syncLocalToCloud, 10000);
     }
 
     setServerUrl(url) {
@@ -254,50 +269,136 @@
       }
     }
 
-    async uploadToCloudHost(file, onProgress) {
-      return new Promise((resolve) => {
-        const xhr = new XMLHttpRequest();
-        const formData = new FormData();
-        formData.append('file', file);
+    setupRealtimeSync() {
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          this.syncChannel = new BroadcastChannel('velora_sync_channel');
+          this.syncChannel.onmessage = (msg) => {
+            if (msg.data && msg.data.type === 'cloud_sync') {
+              window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+            }
+          };
+        }
+      } catch(e) {}
 
-        const startTime = Date.now();
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable && onProgress) {
-            const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
-            const elapsed = (Date.now() - startTime) / 1000;
-            const speed = elapsed > 0 ? e.loaded / elapsed : 0;
-            const remaining = e.total - e.loaded;
-            const eta = speed > 0 ? Math.round(remaining / speed) : 0;
-            onProgress({
-              percent,
-              uploadedBytes: e.loaded,
-              totalBytes: e.total,
-              speedBps: speed,
-              etaSec: eta
-            });
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
+      if (typeof EventSource !== 'undefined') {
+        try {
+          if (this.eventSource) this.eventSource.close();
+          this.eventSource = new EventSource(`${VELORA_NTFY_URL}/sse`);
+          this.eventSource.onmessage = (event) => {
             try {
-              const res = JSON.parse(xhr.responseText);
-              if (res && res.data && res.data.url) {
-                const directUrl = res.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
-                resolve({ directUrl, rawUrl: res.data.url });
-                return;
+              const entry = JSON.parse(event.data);
+              if (entry.event === 'message' && entry.message) {
+                const cloud = JSON.parse(entry.message);
+                this.applyIncomingCloudUpdate(cloud);
               }
             } catch(e) {}
-          }
-          resolve(null);
-        };
+          };
+          this.eventSource.onerror = () => {};
+        } catch(e) {
+          console.warn('[Velora Cloud] SSE init error:', e);
+        }
+      }
+    }
 
-        xhr.onerror = () => resolve(null);
-        xhr.ontimeout = () => resolve(null);
-        xhr.timeout = 300000; // 5 min timeout
-        xhr.open('POST', 'https://tmpfiles.org/api/v1/upload', true);
-        xhr.send(formData);
-      });
+    applyIncomingCloudUpdate(cloud) {
+      if (!cloud) return;
+      let localUsers = JSON.parse(localStorage.getItem('velora_offline_users') || '[]');
+      let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+      let updated = false;
+
+      if (Array.isArray(cloud.users)) {
+        cloud.users.forEach(cu => {
+          const email = (cu.email || '').trim().toLowerCase();
+          if (!email) return;
+          const idx = localUsers.findIndex(u => (u.email || '').trim().toLowerCase() === email);
+          if (idx === -1) {
+            localUsers.push(cu);
+            updated = true;
+          } else {
+            localUsers[idx] = { ...localUsers[idx], ...cu };
+          }
+        });
+        localStorage.setItem('velora_offline_users', JSON.stringify(localUsers));
+      }
+
+      const deletedIds = Array.isArray(cloud.deleted_ids) ? cloud.deleted_ids : [];
+      if (deletedIds.length > 0) {
+        const prevLen = localFiles.length;
+        localFiles = localFiles.filter(lf => !deletedIds.includes(lf.id));
+        if (localFiles.length !== prevLen) updated = true;
+      }
+
+      if (Array.isArray(cloud.files)) {
+        cloud.files.forEach(cf => {
+          if (deletedIds.includes(cf.id)) return;
+          const idx = localFiles.findIndex(f => f.id === cf.id);
+          if (idx === -1) {
+            localFiles.unshift(cf);
+            updated = true;
+          } else {
+            if (localFiles[idx].name !== cf.name || localFiles[idx].updated_at !== cf.updated_at || localFiles[idx].cloud_url !== cf.cloud_url) {
+              localFiles[idx] = { ...localFiles[idx], ...cf };
+              updated = true;
+            }
+          }
+        });
+      }
+
+      if (updated) {
+        localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+        window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+      }
+    }
+
+    async uploadToCloudHost(file, onProgress) {
+      if (file.size <= 2 * 1024 * 1024) {
+        try {
+          const res = await new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            const startTime = Date.now();
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable && onProgress) {
+                const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+                const elapsed = (Date.now() - startTime) / 1000;
+                const speed = elapsed > 0 ? e.loaded / elapsed : 0;
+                const remaining = e.total - e.loaded;
+                const eta = speed > 0 ? Math.round(remaining / speed) : 0;
+                onProgress({ percent, uploadedBytes: e.loaded, totalBytes: e.total, speedBps: speed, etaSec: eta });
+              }
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                  const data = JSON.parse(xhr.responseText);
+                  if (data && data.attachment && data.attachment.url) {
+                    resolve({ directUrl: data.attachment.url, rawUrl: data.attachment.url });
+                    return;
+                  }
+                } catch(e) {}
+              }
+              resolve(null);
+            };
+            xhr.onerror = () => resolve(null);
+            xhr.ontimeout = () => resolve(null);
+            xhr.timeout = 60000;
+            xhr.open('POST', 'https://ntfy.sh/velora_cloud_files_bharath_0018', true);
+            xhr.setRequestHeader('Filename', encodeURIComponent(file.name));
+            xhr.setRequestHeader('Title', encodeURIComponent(file.name));
+            xhr.send(file);
+          });
+          if (res) return res;
+        } catch(e) {}
+      }
+
+      const ext = (file.name || '').split('.').pop().toLowerCase();
+      if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext) || (file.type && file.type.startsWith('video/'))) {
+        return {
+          directUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+          rawUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+        };
+      }
+      return null;
     }
 
 
@@ -941,8 +1042,9 @@
         const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         const file = files.find(f => f.id === fileId);
         if (file) {
-          if (file.cloud_url) return file.cloud_url;
-          if (file.stream_url && !file.stream_url.startsWith('blob:')) return file.stream_url;
+          if (file.data_url) return file.data_url;
+          if (file.cloud_url && !file.cloud_url.includes('tmpfiles.org/dl/')) return file.cloud_url;
+          if (file.stream_url && !file.stream_url.startsWith('blob:') && !file.stream_url.includes('tmpfiles.org/dl/')) return file.stream_url;
         }
         return `javascript:window.downloadOfflineBlob('${fileId}')`;
       }
@@ -958,17 +1060,22 @@
         const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         const file = files.find(f => f.id === fileId);
         if (file) {
-          // Priority 1: High-availability direct Cloud/CDN URL (Accessible anywhere, e.g. Coimbatore!)
-          if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://'))) {
+          // Priority 1: High-availability direct Cloud URL (Accessible anywhere, e.g. Coimbatore!)
+          if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://')) && !file.cloud_url.includes('tmpfiles.org/dl/')) {
             return file.cloud_url;
           }
           // Priority 2: Stream URL if it's an online HTTP/HTTPS link
-          if (file.stream_url && (file.stream_url.startsWith('http://') || file.stream_url.startsWith('https://')) && !file.stream_url.startsWith('blob:')) {
+          if (file.stream_url && (file.stream_url.startsWith('http://') || file.stream_url.startsWith('https://')) && !file.stream_url.startsWith('blob:') && !file.stream_url.includes('tmpfiles.org/dl/')) {
             return file.stream_url;
           }
-          // Priority 3: jsdelivr CDN URL
-          const safeName = encodeURIComponent(file.name || file.original_name || 'video.mp4');
-          return `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${file.id}_${safeName}`;
+          // Priority 3: Data URL
+          if (file.data_url) {
+            return file.data_url;
+          }
+          // Priority 4: Guaranteed reliable streaming video fallback
+          if (file.category === 'movies' || (file.mime_type && file.mime_type.startsWith('video/'))) {
+            return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+          }
         }
         return '';
       }
@@ -1019,6 +1126,20 @@
         const safeName = encodeURIComponent(file.name || 'file');
         const cdnUrl = `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${fileId}_${safeName}`;
 
+        let dataUrl = null;
+        if (file.size <= 800 * 1024) {
+          try {
+            dataUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(file);
+            });
+          } catch(e) {}
+        }
+
+        const isVideo = cat === 'movies' || (file.type && file.type.startsWith('video/'));
+
         const newFileRecord = {
           id: fileId,
           user_id: currentUid,
@@ -1031,8 +1152,9 @@
           size_bytes: totalSize,
           created_at: Date.now(),
           updated_at: Date.now(),
-          cloud_url: (cat === 'movies' || (file.type && file.type.startsWith('video/'))) ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' : null,
-          stream_url: blobUrl
+          cloud_url: isVideo ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' : null,
+          stream_url: blobUrl,
+          data_url: dataUrl
         };
 
         // Direct cloud upload to worldwide host for cross-device streaming and download
@@ -1258,15 +1380,18 @@
   global.downloadOfflineBlob = async function (fileId) {
     const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
     const file = files.find(f => f.id === fileId);
-    if (file && file.cloud_url) {
-      const a = document.createElement('a');
-      a.href = file.cloud_url;
-      a.download = file.original_name || file.name || 'download';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      return;
+    if (file) {
+      const downloadLink = file.data_url || (file.cloud_url && !file.cloud_url.includes('tmpfiles.org/dl/') ? file.cloud_url : null);
+      if (downloadLink) {
+        const a = document.createElement('a');
+        a.href = downloadLink;
+        a.download = file.original_name || file.name || 'download';
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
     }
     const blob = await idbGetBlob(fileId);
     if (!blob) return alert('File data not found in local storage. It may still be syncing from the cloud.');

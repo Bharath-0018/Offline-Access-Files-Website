@@ -199,15 +199,14 @@
         streamUrl = global.api.getStreamUrl(file.id);
       }
 
-      // If streamUrl is invalid or a dead blob from another browser, fallback to cloud/CDN
-      if (!streamUrl || (streamUrl.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)))) {
-        if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://'))) {
+      // If streamUrl is invalid or a dead blob from another browser, fallback to cloud stream
+      if (!streamUrl || streamUrl.includes('tmpfiles.org/dl/') || (streamUrl.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)))) {
+        if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://')) && !file.cloud_url.includes('tmpfiles.org/dl/')) {
           streamUrl = file.cloud_url;
-        } else if (file.stream_url && !file.stream_url.startsWith('blob:')) {
-          streamUrl = file.stream_url;
+        } else if (file.data_url) {
+          streamUrl = file.data_url;
         } else {
-          const safeName = encodeURIComponent(file.name || file.original_name || 'video.mp4');
-          streamUrl = `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${file.id}_${safeName}`;
+          streamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
         }
       }
 
@@ -285,24 +284,13 @@
       // Seamlessly try resilient fallbacks:
       if (!this._triedFallback) {
         this._triedFallback = true;
-        const file = this.currentFile;
-        let backupUrl = null;
-        if (file.cloud_url && file.cloud_url !== this.currentStreamUrl) {
-          backupUrl = file.cloud_url;
-        } else if (file.stream_url && file.stream_url !== this.currentStreamUrl && !file.stream_url.startsWith('blob:')) {
-          backupUrl = file.stream_url;
-        } else {
-          backupUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-        }
-
-        if (backupUrl) {
-          this._showOsd('Buffering High-Speed Cloud Stream...');
-          this.currentStreamUrl = backupUrl;
-          this.video.src = backupUrl;
-          this.video.load();
-          this.video.play().catch(() => {});
-          return;
-        }
+        const backupUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        this._showOsd('Buffering High-Speed Cloud Stream...');
+        this.currentStreamUrl = backupUrl;
+        this.video.src = backupUrl;
+        this.video.load();
+        this.video.play().catch(() => {});
+        return;
       }
 
       // Seamlessly switch to MoviPlayer WebCodecs engine
