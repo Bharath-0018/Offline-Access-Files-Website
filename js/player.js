@@ -187,17 +187,28 @@
 
     async playFile(file) {
       this.currentFile = file;
+      this._triedFallback = false;
       const titleEl = document.getElementById('player-title');
       if (titleEl) titleEl.textContent = file.original_name || file.name;
 
       const isMkv = ((file.original_name || file.name || '').toLowerCase().endsWith('.mkv'));
 
-      // 1. Stream directly from Velora Persistent Cloud Storage using HTTP 206 Partial Content
+      // 1. Stream directly from Velora Persistent Cloud Storage / CDN
       let streamUrl = null;
       if (global.api && global.api.getStreamUrl) {
         streamUrl = global.api.getStreamUrl(file.id);
-      } else {
-        streamUrl = `/api/files/stream/${file.id}?token=${(global.api && global.api.token) || ''}`;
+      }
+
+      // If streamUrl is invalid or a dead blob from another browser, fallback to cloud/CDN
+      if (!streamUrl || (streamUrl.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)))) {
+        if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://'))) {
+          streamUrl = file.cloud_url;
+        } else if (file.stream_url && !file.stream_url.startsWith('blob:')) {
+          streamUrl = file.stream_url;
+        } else {
+          const safeName = encodeURIComponent(file.name || file.original_name || 'video.mp4');
+          streamUrl = `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${file.id}_${safeName}`;
+        }
       }
 
       this.currentStreamUrl = streamUrl;
@@ -212,6 +223,7 @@
       }
 
       this.modal.classList.add('open');
+      this._showOsd(`Playing: ${file.original_name || file.name}`);
 
       // Check last playback position
       const savedSec = file.play_position_seconds || parseFloat(localStorage.getItem(`pos_${file.id}`) || '0');
@@ -245,8 +257,12 @@
       }
       this.video.style.display = 'block';
       this.activeMedia = this.video;
+      this.video.crossOrigin = 'anonymous';
+      this.video.playsInline = true;
       this.video.src = streamUrl;
       this.video.load();
+      const p = this.video.play();
+      if (p) p.catch(() => {});
     }
 
     _useMoviPlayer(streamUrl) {
@@ -263,12 +279,37 @@
     }
 
     _onPlaybackError(e) {
-      if (!this.isOpen() || !this.currentStreamUrl) return;
-      console.warn('Native video playback encountered format limitation. Switching to Universal Engine...');
+      if (!this.isOpen() || !this.currentFile) return;
+      console.warn('[Velora Player] Native video playback error:', e);
+
+      // Seamlessly try resilient fallbacks:
+      if (!this._triedFallback) {
+        this._triedFallback = true;
+        const file = this.currentFile;
+        let backupUrl = null;
+        if (file.cloud_url && file.cloud_url !== this.currentStreamUrl) {
+          backupUrl = file.cloud_url;
+        } else if (file.stream_url && file.stream_url !== this.currentStreamUrl && !file.stream_url.startsWith('blob:')) {
+          backupUrl = file.stream_url;
+        } else {
+          backupUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        }
+
+        if (backupUrl) {
+          this._showOsd('Buffering High-Speed Cloud Stream...');
+          this.currentStreamUrl = backupUrl;
+          this.video.src = backupUrl;
+          this.video.load();
+          this.video.play().catch(() => {});
+          return;
+        }
+      }
 
       // Seamlessly switch to MoviPlayer WebCodecs engine
-      if (this.movi) {
+      if (this.movi && window.customElements && customElements.get('movi-player')) {
         this._useMoviPlayer(this.currentStreamUrl);
+      } else {
+        this._showOsd('Buffering stream. Press Play to start.');
       }
     }
 

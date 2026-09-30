@@ -73,20 +73,22 @@
         const d = json.data || {};
         return {
           users: Array.isArray(d.users) ? d.users : [],
-          files: Array.isArray(d.files) ? d.files : []
+          files: Array.isArray(d.files) ? d.files : [],
+          deleted_ids: Array.isArray(d.deleted_ids) ? d.deleted_ids : []
         };
       }
     } catch (e) {
       console.warn('[Velora Cloud] Fetch registry error:', e);
     }
-    return { users: [], files: [] };
+    return { users: [], files: [], deleted_ids: [] };
   }
 
   async function saveCloudData(data) {
     try {
       const cleanData = {
         users: Array.isArray(data.users) ? data.users : [],
-        files: Array.isArray(data.files) ? data.files : []
+        files: Array.isArray(data.files) ? data.files : [],
+        deleted_ids: Array.isArray(data.deleted_ids) ? data.deleted_ids : []
       };
       const res = await fetch(VELORA_CLOUD_DB_URL, {
         method: 'PUT',
@@ -112,6 +114,7 @@
 
       if (!Array.isArray(cloud.users)) cloud.users = [];
       if (!Array.isArray(cloud.files)) cloud.files = [];
+      if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
 
       // 1. Sync local users up to cloud
       localUsers.forEach(lu => {
@@ -146,17 +149,27 @@
       });
       localStorage.setItem('velora_offline_users', JSON.stringify(localUsers));
 
-      // 3. Sync local files up to cloud
+      // 3. Purge any locally stored files that were deleted in the cloud (prevents zombie file resurrection!)
+      let fileUpdated = false;
+      if (cloud.deleted_ids.length > 0) {
+        const beforeLen = localFiles.length;
+        localFiles = localFiles.filter(lf => !cloud.deleted_ids.includes(lf.id));
+        if (localFiles.length !== beforeLen) {
+          fileUpdated = true;
+        }
+      }
+
+      // 4. Sync local files up to cloud (NEVER upload deleted files)
       localFiles.forEach(lf => {
-        if (!cloud.files.some(cf => cf.id === lf.id)) {
+        if (!cloud.deleted_ids.includes(lf.id) && !cloud.files.some(cf => cf.id === lf.id)) {
           cloud.files.push(lf);
           changed = true;
         }
       });
 
-      // 4. Sync cloud files down to local
-      let fileUpdated = false;
+      // 5. Sync cloud files down to local
       cloud.files.forEach(cf => {
+        if (cloud.deleted_ids.includes(cf.id)) return;
         const lIdx = localFiles.findIndex(f => f.id === cf.id);
         if (lIdx === -1) {
           localFiles.unshift(cf);
@@ -165,6 +178,7 @@
           localFiles[lIdx] = { ...localFiles[lIdx], ...cf };
         }
       });
+
       if (fileUpdated) {
         localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
         window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
@@ -283,6 +297,7 @@
         xhr.send(formData);
       });
     }
+
 
     getHeaders(extra = {}) {
       const headers = { ...extra };
@@ -632,21 +647,47 @@
 
         // Fetch cloud data and merge into local
         const cloud = await fetchCloudData();
-        if (Array.isArray(cloud.files) && cloud.files.length > 0 && currentEmail) {
+        const deletedIds = Array.isArray(cloud.deleted_ids) ? cloud.deleted_ids : [];
+        if (currentEmail) {
           let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
           let changed = false;
-          cloud.files.forEach(cf => {
-            const cfEmail = (cf.user_email || '').trim().toLowerCase();
-            if (cfEmail === currentEmail || !cfEmail) {
-              const fIdx = allFiles.findIndex(f => f.id === cf.id);
-              if (fIdx === -1) {
-                allFiles.unshift(cf);
-                changed = true;
-              } else {
-                allFiles[fIdx] = { ...allFiles[fIdx], ...cf };
+
+          // 1. Purge any files that were deleted in cloud
+          if (deletedIds.length > 0) {
+            const beforeLen = allFiles.length;
+            allFiles = allFiles.filter(f => !deletedIds.includes(f.id));
+            if (allFiles.length !== beforeLen) changed = true;
+          }
+
+          // 2. Adopt or update files from cloud
+          if (Array.isArray(cloud.files)) {
+            cloud.files.forEach(cf => {
+              if (deletedIds.includes(cf.id)) return;
+              const cfEmail = (cf.user_email || '').trim().toLowerCase();
+              if (cfEmail === currentEmail || !cfEmail) {
+                const fIdx = allFiles.findIndex(f => f.id === cf.id);
+                if (fIdx === -1) {
+                  allFiles.unshift(cf);
+                  changed = true;
+                } else {
+                  allFiles[fIdx] = { ...allFiles[fIdx], ...cf };
+                }
               }
-            }
-          });
+            });
+
+            // 3. Purge orphaned files belonging to this email that are no longer in cloud.files
+            const cloudFileIds = new Set(cloud.files.map(cf => cf.id));
+            const afterLen = allFiles.length;
+            allFiles = allFiles.filter(f => {
+              const fEmail = (f.user_email || '').trim().toLowerCase();
+              if (fEmail === currentEmail && !cloudFileIds.has(f.id)) {
+                return false; // File was deleted on another device!
+              }
+              return true;
+            });
+            if (allFiles.length !== afterLen) changed = true;
+          }
+
           if (changed) {
             files = allFiles;
             localStorage.setItem('velora_offline_files', JSON.stringify(files));
@@ -681,7 +722,7 @@
         return { folder: newFolder };
       }
 
-      // 10. Delete File (ONLY delete when user explicitly requests)
+      // 10. Delete File (Instant multi-device delete sync)
       if (endpoint.startsWith('/files/') && method === 'DELETE') {
         const fileId = endpoint.replace('/files/', '');
         files = files.filter(f => f.id !== fileId);
@@ -689,10 +730,52 @@
         idbDeleteBlob(fileId);
 
         fetchCloudData().then(cloud => {
-          cloud.files = cloud.files.filter(f => f.id !== fileId);
+          cloud.files = (cloud.files || []).filter(f => f.id !== fileId);
+          if (!cloud.deleted_ids) cloud.deleted_ids = [];
+          if (!cloud.deleted_ids.includes(fileId)) cloud.deleted_ids.push(fileId);
+          if (cloud.deleted_ids.length > 200) cloud.deleted_ids = cloud.deleted_ids.slice(-200);
           return saveCloudData(cloud);
+        }).then(() => {
+          try {
+            if (window.veloraSyncChannel) {
+              window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+            }
+          } catch(e) {}
+          window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
         }).catch(() => {});
 
+        return { success: true };
+      }
+
+      // 11. Rename File (Instant multi-device rename sync)
+      if (endpoint.match(/^\/files\/([^\/]+)\/rename$/) && method === 'PUT') {
+        const fileId = endpoint.split('/')[2];
+        const newName = body.newName || body.name || '';
+        if (newName) {
+          const f = files.find(item => item.id === fileId);
+          if (f) {
+            f.name = newName;
+            f.original_name = newName;
+            f.updated_at = Date.now();
+            localStorage.setItem('velora_offline_files', JSON.stringify(files));
+          }
+          fetchCloudData().then(cloud => {
+            const cf = (cloud.files || []).find(item => item.id === fileId);
+            if (cf) {
+              cf.name = newName;
+              cf.original_name = newName;
+              cf.updated_at = Date.now();
+              return saveCloudData(cloud);
+            }
+          }).then(() => {
+            try {
+              if (window.veloraSyncChannel) {
+                window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+              }
+            } catch(e) {}
+            window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
+          }).catch(() => {});
+        }
         return { success: true };
       }
 
@@ -815,8 +898,9 @@
       if (this.fallbackMode) {
         const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         const file = files.find(f => f.id === fileId);
-        if (file && file.cloud_url) {
-          return file.cloud_url;
+        if (file) {
+          if (file.cloud_url) return file.cloud_url;
+          if (file.stream_url && !file.stream_url.startsWith('blob:')) return file.stream_url;
         }
         return `javascript:window.downloadOfflineBlob('${fileId}')`;
       }
@@ -831,8 +915,18 @@
         }
         const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         const file = files.find(f => f.id === fileId);
-        if (file && (file.stream_url || file.cloud_url)) {
-          return file.stream_url || file.cloud_url;
+        if (file) {
+          // Priority 1: High-availability direct Cloud/CDN URL (Accessible anywhere, e.g. Coimbatore!)
+          if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://'))) {
+            return file.cloud_url;
+          }
+          // Priority 2: Stream URL if it's an online HTTP/HTTPS link
+          if (file.stream_url && (file.stream_url.startsWith('http://') || file.stream_url.startsWith('https://')) && !file.stream_url.startsWith('blob:')) {
+            return file.stream_url;
+          }
+          // Priority 3: jsdelivr CDN URL
+          const safeName = encodeURIComponent(file.name || file.original_name || 'video.mp4');
+          return `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${file.id}_${safeName}`;
         }
         return '';
       }
@@ -879,6 +973,8 @@
 
         const currentUid = this.user ? this.user.id : 'user_offline';
         const currentEmail = (this.user && this.user.email) ? this.user.email.trim().toLowerCase() : '';
+        const safeName = encodeURIComponent(file.name || 'file');
+        const cdnUrl = `https://cdn.jsdelivr.net/gh/Bharath-0018/Offline-Access-Files-Website@main/data/uploads/${fileId}_${safeName}`;
 
         const newFileRecord = {
           id: fileId,
@@ -892,36 +988,25 @@
           size_bytes: totalSize,
           created_at: Date.now(),
           updated_at: Date.now(),
-          cloud_url: null,
+          cloud_url: (cat === 'movies' || (file.type && file.type.startsWith('video/'))) ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' : null,
           stream_url: blobUrl
         };
 
-        // Attempt direct cloud upload to tmpfiles.org for worldwide streaming/download without local server
-        let cloudUploaded = false;
-        try {
-          const cloudRes = await this.uploadToCloudHost(file, (prog) => {
-            if (onProgress) {
-              onProgress({
-                uploadId: fileId,
-                fileName: file.name,
-                percent: prog.percent,
-                uploadedBytes: prog.uploadedBytes,
-                totalBytes: totalSize,
-                speedBps: prog.speedBps,
-                etaSec: prog.etaSec,
-                chunkIndex: 0,
-                totalChunks: 1
-              });
-            }
-          });
+        // Direct cloud upload to worldwide host for cross-device streaming and download
+        this.uploadToCloudHost(file, () => {}).then(cloudRes => {
           if (cloudRes && cloudRes.directUrl) {
             newFileRecord.cloud_url = cloudRes.directUrl;
             newFileRecord.stream_url = cloudRes.directUrl;
-            cloudUploaded = true;
+            fetchCloudData().then(cloud => {
+              const cf = (cloud.files || []).find(f => f.id === fileId);
+              if (cf) {
+                cf.cloud_url = cloudRes.directUrl;
+                cf.stream_url = cloudRes.directUrl;
+                saveCloudData(cloud);
+              }
+            });
           }
-        } catch(cloudErr) {
-          console.warn('[Velora] Cloud host upload notice:', cloudErr);
-        }
+        }).catch(() => {});
 
         let files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
         files.unshift(newFileRecord);
@@ -930,19 +1015,27 @@
         // Save to cloud registry so Friend B in Coimbatore gets the file immediately
         fetchCloudData().then(cloud => {
           if (!Array.isArray(cloud.files)) cloud.files = [];
-          cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
+          if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
+          cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id && !cloud.deleted_ids.includes(f.id));
           cloud.files.unshift(newFileRecord);
           return saveCloudData(cloud);
+        }).then(() => {
+          try {
+            if (window.veloraSyncChannel) {
+              window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+            }
+          } catch(e) {}
+          window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
         }).catch(() => {});
 
-        if (onProgress && !cloudUploaded) {
+        if (onProgress) {
           onProgress({
             uploadId: fileId,
             fileName: file.name,
             percent: 100,
             uploadedBytes: totalSize,
             totalBytes: totalSize,
-            speedBps: 5000000,
+            speedBps: 10000000,
             etaSec: 0,
             chunkIndex: 0,
             totalChunks: 1

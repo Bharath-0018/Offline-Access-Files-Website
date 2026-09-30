@@ -1493,7 +1493,7 @@
 
     try {
       await api.renameFile(fileId, newName.trim());
-      showToast('File renamed.', 'success');
+      showToast('File renamed successfully.', 'success');
       if (state.currentView === 'dashboard') {
         loadDashboardRecentFiles();
       } else if (state.currentView === 'offline') {
@@ -1501,6 +1501,9 @@
         if (c) renderOfflineMoviesView(c);
       } else {
         loadFiles();
+      }
+      if (window.veloraSyncChannel) {
+        window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
       }
     } catch (e) {
       showToast(e.message, 'error');
@@ -1510,9 +1513,13 @@
   global.deleteFilePrompt = async function (fileId) {
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
-      // Instantly remove card from DOM
+      // Instantly remove card from DOM (Optimistic 0ms update!)
       const card = document.getElementById(`file-${fileId}`);
-      if (card) card.remove();
+      if (card) {
+        card.style.opacity = '0.3';
+        card.style.pointerEvents = 'none';
+        setTimeout(() => card.remove(), 250);
+      }
 
       await api.deleteFile(fileId);
       showToast('File deleted successfully.', 'success');
@@ -1526,6 +1533,11 @@
         loadFiles();
       }
       loadStorageStats();
+
+      // Broadcast to all open tabs and windows
+      if (window.veloraSyncChannel) {
+        window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+      }
     } catch (e) {
       showToast(e.message, 'error');
     }
@@ -1609,6 +1621,90 @@
 
   global.navigateTo = navigateTo;
 
+  // BroadcastChannel for 0ms cross-tab and cross-window sync
+  try {
+    const syncChannel = new BroadcastChannel('velora_sync');
+    syncChannel.onmessage = (event) => {
+      if (event.data && event.data.type === 'sync_files') {
+        if (state.user) {
+          if (state.currentView === 'dashboard') loadDashboardRecentFiles();
+          else if (state.currentView === 'files') loadFiles();
+          else if (state.currentView === 'offline') {
+            const c = document.getElementById('view-content');
+            if (c) renderOfflineMoviesView(c);
+          }
+          loadStorageStats();
+        }
+      }
+    };
+    window.veloraSyncChannel = syncChannel;
+  } catch(e) {}
+
+  // Automated Real-Time Background Synchronization (Checks every 2 seconds for instant updates across devices!)
+  let realtimeSyncTimer = null;
+  let lastFilesHash = '';
+
+  function computeFilesHash(files) {
+    if (!Array.isArray(files)) return '';
+    return files.map(f => `${f.id}_${f.updated_at || f.created_at || 0}_${f.name}_${f.cloud_url || ''}`).join('|');
+  }
+
+  function startRealtimeSync() {
+    if (realtimeSyncTimer) clearInterval(realtimeSyncTimer);
+    realtimeSyncTimer = setInterval(async () => {
+      if (!api.token && !localStorage.getItem('cloud_token')) return;
+      try {
+        const res = await api.getFiles({
+          category: state.currentCategory,
+          folderId: state.currentFolderId
+        });
+        const currentFiles = res.files || [];
+        const newHash = computeFilesHash(currentFiles);
+
+        if (lastFilesHash && newHash !== lastFilesHash) {
+          console.log('[Velora Real-Time Sync] Cloud updates detected! Updating UI instantly...');
+          state.files = currentFiles;
+          lastFilesHash = newHash;
+
+          if (state.currentView === 'files') {
+            const container = document.getElementById('files-grid-container');
+            if (container) {
+              if (currentFiles.length === 0) {
+                container.innerHTML = `
+                  <div style="padding: 48px; text-align: center; color: var(--text-muted); grid-column: 1/-1; background: var(--bg-card); border-radius: var(--radius-md); border: 1px dashed var(--border-subtle);">
+                    ${Icons.render('folder', 48, 'text-muted')}
+                    <h3 style="margin-top: 14px; font-size: 1.1rem; color: var(--text-primary);">No files in this view</h3>
+                    <p style="margin-top: 6px; font-size: 0.85rem;">Upload files or transfer from a nearby computer to get started.</p>
+                    <button class="btn-primary" style="margin-top: 18px;" onclick="window.triggerUpload()">${Icons.render('upload-cloud')} Upload File</button>
+                  </div>
+                `;
+              } else {
+                container.innerHTML = currentFiles.map(f => renderFileCardHtml(f)).join('');
+              }
+            }
+          } else if (state.currentView === 'offline') {
+            const grid = document.getElementById('movies-grid-container');
+            if (grid) {
+              const movies = currentFiles.filter(f => f.category === 'movies' || (f.mime_type && f.mime_type.startsWith('video/')));
+              grid.innerHTML = movies.length > 0 ? movies.map(f => renderFileCardHtml(f)).join('') : `
+                <div style="padding: 48px; text-align: center; color: var(--text-muted); grid-column: 1/-1; background: var(--bg-card); border-radius: var(--radius-md); border: 1px dashed var(--border-subtle);">
+                  ${Icons.render('film', 48, 'text-muted')}
+                  <h3 style="margin-top: 14px; font-size: 1.1rem; color: var(--text-primary);">No offline movies available yet</h3>
+                  <button class="btn-primary" style="margin-top: 18px;" onclick="window.triggerUpload()">${Icons.render('upload-cloud')} Upload Movie File</button>
+                </div>
+              `;
+            }
+          } else if (state.currentView === 'dashboard') {
+            loadDashboardRecentFiles();
+          }
+          loadStorageStats();
+        } else {
+          lastFilesHash = newHash;
+        }
+      } catch(e) {}
+    }, 2000); // 2000ms = 2 seconds instant sync!
+  }
+
   // Initialize App on DOM Load
   document.addEventListener('DOMContentLoaded', async () => {
     // Realtime Peer Cloud File Sync updates
@@ -1626,8 +1722,23 @@
       }
     });
 
+    // Window focus and visibility listeners for instant sync upon switching tabs/windows
+    window.addEventListener('focus', () => {
+      if (api.token || localStorage.getItem('cloud_token')) {
+        loadFiles();
+        loadStorageStats();
+      }
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && (api.token || localStorage.getItem('cloud_token'))) {
+        loadFiles();
+        loadStorageStats();
+      }
+    });
+
     videoPlayer.init();
     initWebSocket();
+    startRealtimeSync();
 
     // Check if opened via ?sync= URL parameter from Computer A
     try {
