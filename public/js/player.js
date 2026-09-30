@@ -199,9 +199,9 @@
         streamUrl = global.api.getStreamUrl(file.id);
       }
 
-      // If streamUrl is invalid or a dead blob from another browser, fallback to cloud stream
-      if (!streamUrl || streamUrl.includes('tmpfiles.org/dl/') || (streamUrl.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)))) {
-        if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://')) && !file.cloud_url.includes('tmpfiles.org/dl/')) {
+      // If streamUrl is invalid, expired, or a dead blob from another browser, fallback to permanent stream
+      if (!streamUrl || streamUrl.includes('tmpfiles.org') || streamUrl.includes('expired') || (streamUrl.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)))) {
+        if (file.cloud_url && (file.cloud_url.startsWith('http://') || file.cloud_url.startsWith('https://')) && !file.cloud_url.includes('tmpfiles.org') && !file.cloud_url.includes('expired')) {
           streamUrl = file.cloud_url;
         } else if (file.data_url) {
           streamUrl = file.data_url;
