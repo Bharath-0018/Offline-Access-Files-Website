@@ -1478,12 +1478,15 @@
     }
 
     const fileName = (file && (file.original_name || file.name)) || 'download';
-    const downloadUrl = api.getDownloadUrl(fileId);
 
+    // Prioritize Zero-Internet Device Storage Download Engine
+    if (typeof window.downloadOfflineBlob === 'function') {
+      window.downloadOfflineBlob(fileId);
+      return;
+    }
+
+    const downloadUrl = api.getDownloadUrl(fileId);
     if (downloadUrl.startsWith('javascript:')) {
-      if (typeof window.downloadOfflineBlob === 'function') {
-        window.downloadOfflineBlob(fileId);
-      }
       return;
     }
 
@@ -1494,7 +1497,7 @@
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showToast(`Downloading "${fileName}" from Velora Cloud...`, 'info');
+    showToast(`Downloading "${fileName}"...`, 'info');
   };
 
   global.renameFilePrompt = async function (fileId, currentName) {

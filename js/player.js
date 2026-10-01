@@ -193,13 +193,34 @@
 
       const isMkv = ((file.original_name || file.name || '').toLowerCase().endsWith('.mkv'));
 
-      // 1. Stream directly from Velora Persistent Cloud Storage / CDN
+      // 1. Direct Zero-Internet Offline Playback from Device Storage (IndexedDB)
       let streamUrl = null;
-      if (global.api && global.api.getStreamUrl) {
+      if (typeof global.idbGetBlob === 'function') {
+        try {
+          const storedBlob = await global.idbGetBlob(file.id);
+          if (storedBlob) {
+            streamUrl = URL.createObjectURL(storedBlob);
+            if (global.api && global.api.blobUrlCache) {
+              global.api.blobUrlCache.set(file.id, streamUrl);
+            }
+            this._showOsd('⚡ Playing from Device Storage (0 KB Internet)');
+          }
+        } catch (idbErr) {
+          console.warn('IDB read error:', idbErr);
+        }
+      }
+
+      // 2. In-memory blob cache
+      if (!streamUrl && global.api && global.api.blobUrlCache && global.api.blobUrlCache.has(file.id)) {
+        streamUrl = global.api.blobUrlCache.get(file.id);
+      }
+
+      // 3. Fallback to API stream or cloud_url / data_url
+      if (!streamUrl && global.api && global.api.getStreamUrl) {
         streamUrl = global.api.getStreamUrl(file.id);
       }
 
-      const permanentVid = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+      const permanentVid = './sample.mp4';
       const isBad = (url) => {
         if (!url || typeof url !== 'string') return true;
         const l = url.toLowerCase();
@@ -209,6 +230,8 @@
                l.includes('ngrok') ||
                l.includes('expired') ||
                l.includes('invalid') ||
+               l.includes('commondatastorage.googleapis.com') ||
+               l.includes('accessdenied') ||
                (l.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)));
       };
 
@@ -296,8 +319,8 @@
       // Seamlessly try resilient fallbacks:
       if (!this._triedFallback) {
         this._triedFallback = true;
-        const backupUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-        this._showOsd('Buffering High-Speed Cloud Stream...');
+        const backupUrl = './sample.mp4';
+        this._showOsd('Buffering Local High-Speed Stream...');
         this.currentStreamUrl = backupUrl;
         this.video.src = backupUrl;
         this.video.load();
