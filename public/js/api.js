@@ -644,20 +644,14 @@
         }
       } catch(e) {}
 
-      const isStaticHost = window.location.hostname.includes('github.io') ||
-                           window.location.hostname.includes('vercel.app') ||
-                           window.location.protocol === 'file:' ||
-                           (window.location.port !== '3000' && window.location.port !== '');
+      const DEFAULT_RENDER_URL = 'https://offline-access-files-website.onrender.com';
 
       const savedUrl = localStorage.getItem('velora_server_url');
       if (savedUrl && !isBadUrl(savedUrl)) {
         this.serverUrl = savedUrl.replace(/\/+$/, '');
         this.fallbackMode = false;
-      } else if (isStaticHost) {
-        this.serverUrl = '';
-        this.fallbackMode = true;
       } else {
-        this.serverUrl = '';
+        this.serverUrl = DEFAULT_RENDER_URL;
         this.fallbackMode = false;
       }
 
@@ -686,7 +680,7 @@
     }
 
     getServerUrl() {
-      return this.serverUrl || window.location.origin;
+      return this.serverUrl || 'https://offline-access-files-website.onrender.com';
     }
 
     getApiBase() {

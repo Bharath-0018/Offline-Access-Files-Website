@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: velora-cloud-backend
+    name: offline-access-files-website
     runtime: node
     plan: free
     region: oregon

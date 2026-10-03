@@ -861,9 +861,9 @@
           <h3 style="font-size:1.1rem; font-weight:700; margin-bottom:16px;">Velora Cloud Connection</h3>
           <div class="form-group">
             <label>Backend API Server URL</label>
-            <input type="text" id="setting-server-url" class="form-input" value="${escapeHtml(api.serverUrl || window.location.origin)}" placeholder="http://localhost:3000">
+            <input type="text" id="setting-server-url" class="form-input" value="${escapeHtml(api.serverUrl || 'https://offline-access-files-website.onrender.com')}" placeholder="https://offline-access-files-website.onrender.com">
             <p style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-              Accessing from Computer B or Mobile? Set your host machine's IP (e.g. <code>http://192.168.1.50:3000</code>).
+              Production Cloud Backend: <code>https://offline-access-files-website.onrender.com</code> (Pre-configured for all devices & friends).
             </p>
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
