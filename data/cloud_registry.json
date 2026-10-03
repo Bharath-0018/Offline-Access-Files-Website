@@ -1,7 +1,24 @@
 {
   "version": 1,
-  "last_updated": 1791009046256,
-  "users": [],
+  "last_updated": 1791010800211,
+  "users": [
+    {
+      "id": "user_1791010800210_r242f",
+      "email": "bharath006@gmail.com",
+      "name": "Bharath",
+      "password": "bharath@2006",
+      "role": "user",
+      "is_verified": true,
+      "storageQuotaBytes": 53687091200,
+      "created_at": 1791010800210,
+      "sessions": [
+        {
+          "token": "cloud_token_1791010800210",
+          "createdAt": 1791010800210
+        }
+      ]
+    }
+  ],
   "files": [],
   "deleted_ids": [
     "gh_3d1191cc6bfa",
@@ -17,12 +34,12 @@
     "test permanent.txt",
     "test_file.txt",
     "test_permanent.txt",
-    "SIDDHARTH _Resume_Final.pdf",
-    "SIDDHARTH  Resume Final.pdf",
-    "file_1790841295030_SIDDHARTH__Resume_Final.pdf",
-    "TamilPrint - Mandaadi (2026) Tamil HD DVD Print 1080pHD.mkv",
+    "siddharth _resume_final.pdf",
+    "siddharth  resume final.pdf",
+    "file_1790841295030_siddharth__resume_final.pdf",
+    "tamilprint - mandaadi (2026) tamil hd dvd print 1080phd.mkv",
     "sample.mp4",
     "sample",
-    "723723105006  Iniyavarman Resume  1   1 .pdf"
+    "723723105006  iniyavarman resume  1   1 .pdf"
   ]
 }
