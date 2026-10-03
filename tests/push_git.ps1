@@ -5,6 +5,7 @@ $repoPath = "c:\Users\VSB\Downloads\Offline-Access-Files-Website-main\Offline-Ac
 
 Set-Location $repoPath
 & $git add -A
-& $git commit -m "fix: preserve uploaded files, enforce zero-internet offline downloads, and block resurrected deletes"
+& $git commit -m "chore: include push script"
+& $git pull --rebase "https://$($token)@github.com/Bharath-0018/Offline-Access-Files-Website.git" main
 & $git push "https://$($token)@github.com/Bharath-0018/Offline-Access-Files-Website.git" main
-Write-Host "Git push completed successfully!"
+Write-Host "Git rebase & push completed successfully!"
