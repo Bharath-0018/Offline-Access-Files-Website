@@ -420,7 +420,7 @@
       users: cloudUsers,
       files: cloudFiles,
       deleted_ids: Array.from(allDeletedIds),
-      deleted_names: Array.from(allDeletedNames)
+      deleted_names: Array.from(new Set(deletedNames || []))
     };
     _lastFetchTime = Date.now();
 
@@ -436,9 +436,6 @@
     if (!url || typeof url !== 'string') return true;
     const l = url.toLowerCase();
     return l.includes('tmpfiles.org') ||
-           l.includes('pinggy') ||
-           l.includes('localhost.run') ||
-           l.includes('ngrok') ||
            l.includes('expired') ||
            l.includes('invalid') ||
            l.includes('commondatastorage.googleapis.com') ||

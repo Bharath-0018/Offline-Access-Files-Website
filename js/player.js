@@ -225,9 +225,6 @@
         if (!url || typeof url !== 'string') return true;
         const l = url.toLowerCase();
         return l.includes('tmpfiles.org') ||
-               l.includes('pinggy') ||
-               l.includes('localhost.run') ||
-               l.includes('ngrok') ||
                l.includes('expired') ||
                l.includes('invalid') ||
                l.includes('commondatastorage.googleapis.com') ||
