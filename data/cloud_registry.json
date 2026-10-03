@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": 1791008752018,
+  "last_updated": 1791008753605,
   "users": [
     {
       "id": "usr_master_bharath",
@@ -11,7 +11,14 @@
       "is_verified": true,
       "storageQuotaBytes": 53687091200,
       "created_at": 1791008752017,
-      "sessions": []
+      "sessions": [
+        {
+          "token": "cloud_token_1791008753605_avjjy",
+          "createdAt": 1791008753605
+        }
+      ],
+      "activeFriendsCount": 1,
+      "maxAllowedFriends": 5
     }
   ],
   "files": [],
