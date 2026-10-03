@@ -1,25 +1,20 @@
 {
   "version": 1,
-  "last_updated": 1791008781635,
-  "users": [],
-  "files": [
+  "last_updated": 1791008835561,
+  "users": [
     {
-      "id": "file_1791008765497_g5ku",
-      "user_id": "usr_master_bharath",
-      "user_email": "bharathperumal09@gmail.com",
-      "folder_id": null,
-      "name": "TamilPrint - Mandaadi (2026) Tamil HD DVD Print 1080pHD.mkv",
-      "original_name": "TamilPrint - Mandaadi (2026) Tamil HD DVD Print 1080pHD.mkv",
-      "category": "movies",
-      "mime_type": "video/matroska",
-      "size_bytes": 3089082029,
-      "created_at": 1791008780437,
-      "updated_at": 1791008780437,
-      "cloud_url": null,
-      "stream_url": "blob:https://offline-access-files-website.vercel.app/6473adf9-5484-47d3-bc0f-1562ce407328",
-      "data_url": null
+      "id": "usr_master_bharath",
+      "email": "bharathperumal09@gmail.com",
+      "name": "bharathperumal09",
+      "password": "Bharath@2006",
+      "role": "admin",
+      "is_verified": true,
+      "storageQuotaBytes": 53687091200,
+      "created_at": 1791008835560,
+      "sessions": []
     }
   ],
+  "files": [],
   "deleted_ids": [
     "gh_3d1191cc6bfa",
     "gh_912b3fff795b",
