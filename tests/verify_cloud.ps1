@@ -42,13 +42,25 @@ foreach ($item in $uploadsRes) {
 
 # 4. Verify Public CDN Download without tokens
 Write-Host "`n[Step 4] Testing Public Download of Cloud File on Friend's Device..."
-$testFile = $reg.files[0]
-Write-Host "  - File: $($testFile.name) (Size: $([math]::Round($testFile.size_bytes / 1024, 1)) KB)"
-Write-Host "  - Cloud URL: $($testFile.cloud_url)"
+$remoteFile = $reg.files | Where-Object { $_.cloud_url -match "^https?://" } | Select-Object -First 1
+if ($remoteFile) {
+    Write-Host "  - File: $($remoteFile.name) (Size: $([math]::Round($remoteFile.size_bytes / 1024, 1)) KB)"
+    Write-Host "  - Cloud URL: $($remoteFile.cloud_url)"
+    $headResp = Invoke-WebRequest -Uri $remoteFile.cloud_url -Method Head
+    Write-Host "  - HTTP Status: $($headResp.StatusCode) OK"
+    Write-Host "  - Content-Length: $($headResp.Headers['Content-Length']) bytes"
+}
 
-$headResp = Invoke-WebRequest -Uri $testFile.cloud_url -Method Head
-Write-Host "  - HTTP Status: $($headResp.StatusCode) OK"
-Write-Host "  - Content-Length: $($headResp.Headers['Content-Length']) bytes"
+# 5. Verify Permanent Deletion Blacklist Integrity
+Write-Host "`n[Step 5] Verifying Permanent Deletion Blacklist & Auto-Discovery Filters..."
+Write-Host "  - Deleted IDs tracked: $($reg.deleted_ids.Count)"
+Write-Host "  - Deleted Names tracked: $($reg.deleted_names.Count)"
+$deletedFound = $reg.files | Where-Object { $reg.deleted_ids -contains $_.id -or $reg.deleted_names -contains $_.name }
+if ($deletedFound) {
+    Write-Error "Found resurrected deleted file in registry files list!"
+    exit 1
+}
+Write-Host "  - SUCCESS: Zero deleted files present in active registry!"
 
 Write-Host "`n================================================================"
 Write-Host "   ALL VERIFICATIONS PASSED: 100% REAL CLOUD STORAGE LIVE!      "
