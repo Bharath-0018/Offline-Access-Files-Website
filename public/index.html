@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Velora - Personal Cloud & Pendrive-Style File System</title>
+  <title>Velora - Real Online Cloud Storage</title>
   <link rel="stylesheet" href="css/app.css">
   <!-- In-Browser Universal Codec & MKV Player Engine -->
   <script type="module">
@@ -26,7 +26,7 @@
         </div>
         <div>
           <div class="brand-title">Velora</div>
-          <span class="brand-badge">Personal Cloud</span>
+          <span class="brand-badge">Real Online Cloud</span>
         </div>
       </div>
 
@@ -115,10 +115,10 @@
             <span id="friends-badge-count" style="background:#6366f1; color:#fff; border-radius:12px; padding:1px 6px; font-size:0.7rem; font-weight:700;">1/5</span>
           </button>
 
-          <!-- LAN Status Indicator -->
+          <!-- Cloud Status Indicator -->
           <div class="network-pill" id="network-pill">
             <div class="network-pill-pulse"></div>
-            <span id="network-status-text">LAN Ready</span>
+            <span id="network-status-text">Real Cloud Online</span>
           </div>
 
           <button class="btn-primary" onclick="window.triggerUpload()">
@@ -331,6 +331,30 @@
       <button class="btn-secondary" style="width:100%; justify-content:center; padding:9px;" onclick="window.closeFriendsModal()">
         Done
       </button>
+    </div>
+  </div>
+
+  <!-- Real Cloud Storage Network Gatekeeper Overlay -->
+  <div id="offline-network-overlay" class="network-overlay" style="display:none;">
+    <div class="modal-card" style="max-width:480px; text-align:center; padding:32px 24px;">
+      <div style="width:64px; height:64px; border-radius:50%; background:rgba(244,63,94,0.15); color:var(--accent-rose); display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+      </div>
+      <h2 style="font-size:1.35rem; font-weight:700; margin-bottom:8px;">Internet Connection Required</h2>
+      <p style="font-size:0.88rem; color:var(--text-secondary); line-height:1.6; margin-bottom:20px;">
+        Velora uses <strong>Real Online Cloud Storage</strong> to securely store and sync your files across all your devices and friends. An active internet connection is required to load the cloud database and log in.
+      </p>
+      <div style="background:rgba(15,23,42,0.8); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:12px; margin-bottom:20px; font-size:0.8rem; text-align:left; color:var(--text-muted);">
+        💡 <strong>Offline Access:</strong> Files you have already uploaded or downloaded to this device are saved in device storage and can still be played offline in the Offline Movies tab.
+      </div>
+      <div style="display:flex; gap:10px; justify-content:center;">
+        <button class="btn-primary" style="padding:10px 20px; font-size:0.9rem;" onclick="window.checkOnlineStatus(true)">
+          🔄 Retry Connection
+        </button>
+        <button class="btn-secondary" style="padding:10px 16px; font-size:0.85rem;" onclick="window.viewOfflineCachedFiles()">
+          📁 View Cached Files
+        </button>
+      </div>
     </div>
   </div>
 

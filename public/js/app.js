@@ -1394,6 +1394,10 @@
   };
 
   global.triggerUpload = function () {
+    if (!navigator.onLine) {
+      showToast('🌐 Internet connection is required to upload files to Real Online Cloud Storage.', 'error');
+      return;
+    }
     const input = document.createElement('input');
     input.type = 'file';
     input.onchange = async (e) => {
@@ -1632,6 +1636,37 @@
     loadFiles();
   };
 
+  global.checkOnlineStatus = function (showToastMsg = false) {
+    const overlay = document.getElementById('offline-network-overlay');
+    const pill = document.getElementById('network-pill');
+    const pillText = document.getElementById('network-status-text');
+
+    if (!navigator.onLine) {
+      if (overlay) overlay.style.display = 'flex';
+      if (pill) {
+        pill.classList.add('offline');
+        pill.classList.remove('online');
+      }
+      if (pillText) pillText.textContent = 'Offline (No Internet)';
+      if (showToastMsg) showToast('⚠️ No internet connection detected. Please connect to Wi-Fi or Mobile Data.', 'warning');
+    } else {
+      if (overlay) overlay.style.display = 'none';
+      if (pill) {
+        pill.classList.remove('offline');
+        pill.classList.add('online');
+      }
+      if (pillText) pillText.textContent = 'Real Cloud Online';
+      if (showToastMsg) showToast('🌐 Connected to Real Online Cloud Storage!', 'success');
+    }
+  };
+
+  global.viewOfflineCachedFiles = function () {
+    const overlay = document.getElementById('offline-network-overlay');
+    if (overlay) overlay.style.display = 'none';
+    navigateTo('offline');
+    showToast('Viewing local cached files. Connect to internet for online cloud files.', 'info');
+  };
+
   global.navigateTo = navigateTo;
 
   // BroadcastChannel for 0ms cross-tab and cross-window sync
@@ -1752,6 +1787,19 @@
     videoPlayer.init();
     initWebSocket();
     startRealtimeSync();
+
+    // Enforce Real Online Cloud gatekeeper status
+    checkOnlineStatus(false);
+    window.addEventListener('online', () => {
+      checkOnlineStatus(true);
+      if (state.user) {
+        loadFiles();
+        loadStorageStats();
+      }
+    });
+    window.addEventListener('offline', () => {
+      checkOnlineStatus(false);
+    });
 
     // Check if opened via ?sync= URL parameter from Computer A
     try {

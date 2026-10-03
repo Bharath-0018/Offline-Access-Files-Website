@@ -352,6 +352,19 @@ body {
   border-radius: 20px;
   font-size: 0.8rem;
   font-weight: 600;
+  transition: var(--transition);
+}
+
+.network-pill.offline {
+  background: rgba(244, 63, 94, 0.1);
+  border-color: rgba(244, 63, 94, 0.3);
+  color: var(--accent-rose);
+}
+
+.network-pill.offline .network-pill-pulse {
+  background: var(--accent-rose);
+  box-shadow: 0 0 8px var(--accent-rose);
+  animation: none;
 }
 
 .network-pill-pulse {
@@ -361,6 +374,18 @@ body {
   background: var(--accent-emerald);
   box-shadow: 0 0 8px var(--accent-emerald);
   animation: pulse 2s infinite;
+}
+
+.network-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 13, 22, 0.94);
+  backdrop-filter: blur(14px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
 }
 
 @keyframes pulse {

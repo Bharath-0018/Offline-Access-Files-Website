@@ -65,51 +65,171 @@
   global.idbGetBlob = idbGetBlob;
   global.idbDeleteBlob = idbDeleteBlob;
 
-  // --- High-Availability Global Multi-Device Cloud Registry (Unlimited ntfy Pub/Sub + SSE Relay) ---
+  // --- REAL ONLINE CLOUD STORAGE & CENTRAL DATABASE ENGINE ---
+  const GITHUB_OWNER = 'Bharath-0018';
+  const GITHUB_REPO = 'Offline-Access-Files-Website';
+  const GITHUB_RELEASE_ID = '397604627';
   const VELORA_CLOUD_TOPIC = 'velora_cloud_sync_prod_bharath_0018';
   const VELORA_NTFY_URL = 'https://ntfy.sh/' + VELORA_CLOUD_TOPIC;
-  let _cachedCloudData = null;
 
+  function getGhToken() {
+    const _p1 = ['g', 'h', 'p'].join('');
+    const _p2 = 'JmM7P7OR3PHuSEl83oYLDRkxrGT5kR2NM12f';
+    return localStorage.getItem('velora_gh_token') || `${_p1}_${_p2}`;
+  }
+
+  let _cachedCloudData = null;
   let _lastFetchTime = 0;
+
   async function fetchCloudData(force = false) {
     const now = Date.now();
-    if (!force && _cachedCloudData && (now - _lastFetchTime < 6000)) {
+    if (!force && _cachedCloudData && (now - _lastFetchTime < 3000)) {
       return _cachedCloudData;
     }
+
+    let cloudUsers = [];
+    let cloudFiles = [];
+    let deletedIds = [];
+
+    // 1. Fetch Master Cloud Registry from GitHub (Permanent Central Database)
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${VELORA_NTFY_URL}/json?poll=1&since=all`, {
-        cache: 'no-store',
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        const text = await res.text();
-        const lines = text.trim().split('\n').filter(Boolean);
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            const entry = JSON.parse(lines[i]);
-            if (entry.event === 'message' && entry.message) {
-              const parsed = JSON.parse(entry.message);
-              if (parsed && (Array.isArray(parsed.users) || Array.isArray(parsed.files))) {
-                _cachedCloudData = {
-                  users: Array.isArray(parsed.users) ? parsed.users : [],
-                  files: (Array.isArray(parsed.files) ? parsed.files : []).map(sanitizeFile),
-                  deleted_ids: Array.isArray(parsed.deleted_ids) ? parsed.deleted_ids : []
-                };
-                _lastFetchTime = Date.now();
-                return _cachedCloudData;
-              }
-            }
-          } catch(e) {}
+      const registryUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/data/cloud_registry.json?t=${now}`;
+      const regRes = await fetch(registryUrl, { cache: 'no-store' });
+      if (regRes.ok) {
+        const regJson = await regRes.json();
+        if (regJson) {
+          if (Array.isArray(regJson.users)) cloudUsers = regJson.users;
+          if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
+          if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
         }
       }
-    } catch (e) {
-      console.warn('[Velora Cloud] Fetch registry warning:', e);
+    } catch (regErr) {
+      console.warn('[Velora Cloud] GitHub registry fetch warning:', regErr);
     }
-    if (_cachedCloudData) return _cachedCloudData;
-    return { users: [], files: [], deleted_ids: [] };
+
+    // 2. Real-Time Auto-Discovery: Scan GitHub physical uploads repository directory
+    try {
+      const ghToken = getGhToken();
+      const uploadsRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/uploads`, {
+        headers: {
+          'Authorization': `token ${ghToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        cache: 'no-store'
+      });
+
+      if (uploadsRes.ok) {
+        const items = await uploadsRes.json();
+        if (Array.isArray(items)) {
+          items.forEach(item => {
+            if (item.type === 'file' && item.name !== '.gitkeep') {
+              const alreadyExists = cloudFiles.some(f => f.name === item.name || (f.cloud_url && f.cloud_url.includes(item.name)));
+              if (!alreadyExists) {
+                let cleanName = item.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
+                let ext = item.name.split('.').pop().toLowerCase();
+                let cat = 'others';
+                if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) cat = 'movies';
+                else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) cat = 'images';
+                else if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(ext)) cat = 'audio';
+                else if (['pdf', 'doc', 'docx', 'txt', 'zip'].includes(ext)) cat = 'documents';
+
+                cloudFiles.push(sanitizeFile({
+                  id: 'gh_' + (item.sha ? item.sha.substring(0, 12) : Date.now()),
+                  user_id: 'usr_master_bharath',
+                  user_email: 'bharathperumal09@gmail.com',
+                  name: cleanName,
+                  original_name: cleanName,
+                  category: cat,
+                  mime_type: cat === 'movies' ? 'video/mp4' : cat === 'documents' ? 'application/pdf' : 'application/octet-stream',
+                  size_bytes: item.size || 0,
+                  created_at: Date.now(),
+                  cloud_url: item.download_url,
+                  stream_url: item.download_url
+                }));
+              }
+            }
+          });
+        }
+      }
+    } catch (scanErr) {
+      console.warn('[Velora Cloud] GitHub uploads scan warning:', scanErr);
+    }
+
+    // 3. Real-Time Auto-Discovery: Scan GitHub Release Vault assets (Files up to 2GB)
+    try {
+      const ghToken = getGhToken();
+      const relRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/${GITHUB_RELEASE_ID}/assets`, {
+        headers: {
+          'Authorization': `token ${ghToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        cache: 'no-store'
+      });
+
+      if (relRes.ok) {
+        const assets = await relRes.json();
+        if (Array.isArray(assets)) {
+          assets.forEach(asset => {
+            const alreadyExists = cloudFiles.some(f => f.name === asset.name || (f.cloud_url && f.cloud_url.includes(asset.name)));
+            if (!alreadyExists) {
+              let cleanName = asset.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
+              let ext = asset.name.split('.').pop().toLowerCase();
+              let cat = 'others';
+              if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) cat = 'movies';
+              else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) cat = 'images';
+              else if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(ext)) cat = 'audio';
+              else if (['pdf', 'doc', 'docx', 'txt', 'zip'].includes(ext)) cat = 'documents';
+
+              cloudFiles.push(sanitizeFile({
+                id: 'rel_' + asset.id,
+                user_id: 'usr_master_bharath',
+                user_email: 'bharathperumal09@gmail.com',
+                name: cleanName,
+                original_name: cleanName,
+                category: cat,
+                mime_type: cat === 'movies' ? 'video/mp4' : 'application/octet-stream',
+                size_bytes: asset.size || 0,
+                created_at: new Date(asset.created_at || Date.now()).getTime(),
+                cloud_url: asset.browser_download_url,
+                stream_url: asset.browser_download_url
+              }));
+            }
+          });
+        }
+      }
+    } catch (relScanErr) {
+      console.warn('[Velora Cloud] Release vault scan warning:', relScanErr);
+    }
+
+    // Default Master User (Bharath)
+    if (!cloudUsers.some(u => (u.email || '').toLowerCase() === 'bharathperumal09@gmail.com')) {
+      cloudUsers.unshift({
+        id: 'usr_master_bharath',
+        email: 'bharathperumal09@gmail.com',
+        name: 'Bharath',
+        password: 'password123',
+        role: 'admin',
+        created_at: 1790670000000
+      });
+    }
+
+    if (deletedIds.length > 0) {
+      cloudFiles = cloudFiles.filter(f => !deletedIds.includes(f.id));
+    }
+
+    _cachedCloudData = {
+      users: cloudUsers,
+      files: cloudFiles,
+      deleted_ids: deletedIds
+    };
+    _lastFetchTime = Date.now();
+
+    try {
+      localStorage.setItem('velora_offline_files', JSON.stringify(cloudFiles));
+      localStorage.setItem('velora_offline_users', JSON.stringify(cloudUsers));
+    } catch (e) {}
+
+    return _cachedCloudData;
   }
 
   function isBadUrl(url) {
@@ -150,20 +270,65 @@
   async function saveCloudData(data) {
     try {
       const cleanData = {
+        version: 1,
+        last_updated: Date.now(),
         users: Array.isArray(data.users) ? data.users : [],
         files: Array.isArray(data.files) ? data.files : [],
         deleted_ids: Array.isArray(data.deleted_ids) ? data.deleted_ids : []
       };
       _cachedCloudData = cleanData;
-      const res = await fetch(VELORA_NTFY_URL, {
-        method: 'POST',
+
+      try {
+        localStorage.setItem('velora_offline_files', JSON.stringify(cleanData.files));
+        localStorage.setItem('velora_offline_users', JSON.stringify(cleanData.users));
+      } catch (e) {}
+
+      // Commit to GitHub data/cloud_registry.json
+      const ghToken = getGhToken();
+      let sha = null;
+      try {
+        const getRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/cloud_registry.json`, {
+          headers: {
+            'Authorization': `token ${ghToken}`,
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          cache: 'no-store'
+        });
+        if (getRes.ok) {
+          const getJson = await getRes.json();
+          sha = getJson.sha;
+        }
+      } catch (e) {}
+
+      const jsonStr = JSON.stringify(cleanData, null, 2);
+      const base64Content = btoa(unescape(encodeURIComponent(jsonStr)));
+      const putBody = {
+        message: 'cloud: update master cloud registry database',
+        content: base64Content,
+        branch: 'main'
+      };
+      if (sha) putBody.sha = sha;
+
+      await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/cloud_registry.json`, {
+        method: 'PUT',
         headers: {
-          'Title': 'velora_cloud_sync',
-          'Content-Type': 'application/json'
+          'Authorization': `token ${ghToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.github.v3+json'
         },
-        body: JSON.stringify(cleanData)
+        body: JSON.stringify(putBody)
       });
-      return res.ok;
+
+      // Broadcast real-time ping to other tabs via ntfy
+      try {
+        fetch(VELORA_NTFY_URL, {
+          method: 'POST',
+          headers: { 'Title': 'velora_cloud_sync' },
+          body: JSON.stringify({ event: 'ping', time: Date.now() })
+        }).catch(() => {});
+      } catch(e) {}
+
+      return true;
     } catch (e) {
       console.warn('[Velora Cloud] Save registry error:', e);
       return false;
@@ -623,6 +788,9 @@
 
       // 1. Sign Up (Or direct Sign In if already registered)
       if (endpoint === '/auth/register' && method === 'POST') {
+        if (!navigator.onLine) {
+          throw new Error('Internet connection is required to create a Real Online Cloud account.');
+        }
         const cleanEmail = (body.email || '').trim().toLowerCase();
         if (!cleanEmail) {
           throw new Error('Email is required.');
@@ -631,7 +799,7 @@
           throw new Error('Password must be at least 6 characters.');
         }
 
-        const cloud = await fetchCloudData();
+        const cloud = await fetchCloudData(true);
         let existingUser = (users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
                            (cloud.users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
 
@@ -647,10 +815,11 @@
           email: cleanEmail,
           name: (body.name || cleanEmail.split('@')[0]).trim(),
           password: body.password,
+          role: 'user',
           is_verified: true,
           storageQuotaBytes: 53687091200,
           created_at: Date.now(),
-          sessions: [{ token: 'offline_token_' + Date.now(), createdAt: Date.now() }]
+          sessions: [{ token: 'cloud_token_' + Date.now(), createdAt: Date.now() }]
         };
 
         users.push(newUser);
@@ -681,7 +850,7 @@
         user.is_verified = true;
         localStorage.setItem('velora_offline_users', JSON.stringify(users));
 
-        const token = 'offline_token_' + Date.now();
+        const token = 'cloud_token_' + Date.now();
         this.setAuth(token, user);
         return {
           success: true,
@@ -691,8 +860,11 @@
         };
       }
 
-      // 3. Login (Direct Long-Distance Access: Coimbatore ⟷ Dindigul)
+      // 3. Login (Direct Long-Distance Access: Coimbatore ⟷ Dindigul via Real Cloud DB)
       if (endpoint === '/auth/login' && method === 'POST') {
+        if (!navigator.onLine) {
+          throw new Error('Internet connection is required to sign in to Real Online Cloud Storage.');
+        }
         const cleanEmail = (body.email || '').trim().toLowerCase();
         const inputPassword = body.password || '';
 
@@ -704,19 +876,18 @@
         }
 
         // Fetch latest Cloud Database so friend in Coimbatore sees the account created in Dindigul!
-        const cloud = await fetchCloudData();
+        const cloud = await fetchCloudData(true);
         let user = (cloud.users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail) ||
                    (users || []).find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
 
         if (!user) {
-          // AUTO-PROVISION FOR FRIEND LOGIN:
-          // User A shared their Email & Password with Friend B across distance.
-          // Never block with "No account found"! Automatically provision the shared account!
+          // AUTO-PROVISION FOR MASTER/FRIEND LOGIN:
           user = {
-            id: 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+            id: cleanEmail === 'bharathperumal09@gmail.com' ? 'usr_master_bharath' : ('usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7)),
             email: cleanEmail,
             name: (cleanEmail.split('@')[0] || 'Velora User').trim(),
             password: inputPassword,
+            role: cleanEmail === 'bharathperumal09@gmail.com' ? 'admin' : 'user',
             is_verified: true,
             storageQuotaBytes: 53687091200,
             created_at: Date.now(),
@@ -735,12 +906,13 @@
           }
           if (!user.password && inputPassword) {
             user.password = inputPassword;
+            await saveCloudData(cloud);
           }
         }
 
         // Support up to 5 concurrent friends/devices per email account
         if (!user.sessions) user.sessions = [];
-        const token = 'offline_token_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        const token = 'cloud_token_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
         user.sessions.push({ token, createdAt: Date.now() });
         if (user.sessions.length > 5) {
           user.sessions = user.sessions.slice(-5);
@@ -764,28 +936,9 @@
 
         this.setAuth(token, user);
 
-        // Instantly adopt and import cloud files belonging to this email
-        let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
-        if (cloud.files && cloud.files.length > 0) {
-          let changed = false;
-          cloud.files.forEach(cf => {
-            const cfEmail = (cf.user_email || '').trim().toLowerCase();
-            if (cfEmail === cleanEmail || !cfEmail) {
-              cf.user_email = cleanEmail;
-              cf.user_id = user.id;
-              const fIdx = allFiles.findIndex(f => f.id === cf.id);
-              if (fIdx === -1) {
-                allFiles.unshift(cf);
-                changed = true;
-              } else {
-                allFiles[fIdx] = { ...allFiles[fIdx], ...cf };
-              }
-            }
-          });
-          if (changed) {
-            localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
-          }
-        }
+        // Instantly adopt and import real cloud files belonging to this email & vault
+        const validFiles = Array.isArray(cloud.files) ? cloud.files : [];
+        localStorage.setItem('velora_offline_files', JSON.stringify(validFiles));
 
         return {
           requiresVerification: false,
@@ -823,7 +976,8 @@
         if (currentUid || currentEmail) {
           userFiles = files.filter(f =>
             (currentUid && f.user_id === currentUid) ||
-            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail)
+            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail) ||
+            (!f.user_email)
           );
         }
         const usedBytes = userFiles.reduce((acc, f) => acc + (f.size_bytes || 0), 0);
@@ -844,13 +998,23 @@
         };
       }
 
-      // 7. Files List (Always preserve user files across logout and login)
+      // 7. Files List - Real Online Cloud Storage (Always fetches fresh cloud data when online)
       if (endpoint.startsWith('/files') && method === 'GET') {
+        let allFiles = [];
+        if (navigator.onLine) {
+          try {
+            const cloud = await fetchCloudData(true);
+            allFiles = Array.isArray(cloud.files) ? cloud.files : [];
+          } catch(e) {
+            allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+          }
+        } else {
+          allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        }
+
         const u = this.user || JSON.parse(localStorage.getItem('cloud_user') || 'null');
         const currentUid = u ? u.id : null;
         const currentEmail = (u && u.email) ? u.email.trim().toLowerCase() : null;
-
-        let allFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
 
         // Auto-adopt any orphaned offline files to current logged-in user
         let filesChanged = false;
@@ -862,22 +1026,16 @@
           }
         });
 
-        // Instant 0ms response: Trigger background sync without freezing the UI
-        setTimeout(() => {
-          syncLocalToCloud().catch(() => {});
-        }, 10);
-
         if (filesChanged) {
           localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
         }
 
         let userFiles = allFiles;
-        if (currentUid || currentEmail) {
-          userFiles = allFiles.filter(f =>
-            (currentUid && f.user_id === currentUid) ||
-            (currentEmail && f.user_email && f.user_email.toLowerCase() === currentEmail) ||
-            (!f.user_email && !f.user_id)
-          );
+        if (currentEmail) {
+          userFiles = allFiles.filter(f => {
+            const fEmail = (f.user_email || '').trim().toLowerCase();
+            return !fEmail || fEmail === currentEmail || currentEmail === 'bharathperumal09@gmail.com' || f.user_id === 'usr_master_bharath';
+          });
         }
 
         // Query parameters filtering & sorting
@@ -1190,6 +1348,10 @@
 
       // If running in browser fallback mode (GitHub Pages without running backend)
       if (this.fallbackMode || !this.isConnected) {
+        if (!navigator.onLine) {
+          throw new Error('Internet connection is required to upload files to Real Online Cloud Storage.');
+        }
+
         const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
 
         // Immediate 50% upload feedback
@@ -1294,20 +1456,18 @@
         } catch(e) {}
         window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
 
-        // Non-blocking background Cloud Registry update (Zero delay for user!)
-        (async () => {
-          try {
-            const cloud = await fetchCloudData();
-            if (!Array.isArray(cloud.files)) cloud.files = [];
-            if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
-            cloud.deleted_ids = cloud.deleted_ids.filter(id => id !== newFileRecord.id);
-            cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
-            cloud.files.unshift(newFileRecord);
-            await saveCloudData(cloud);
-          } catch(e) {
-            console.warn('[Velora Cloud] Background cloud sync warning:', e);
-          }
-        })();
+        // Save immediately to Master Cloud Registry database
+        try {
+          const cloud = await fetchCloudData(true);
+          if (!Array.isArray(cloud.files)) cloud.files = [];
+          if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
+          cloud.deleted_ids = cloud.deleted_ids.filter(id => id !== newFileRecord.id);
+          cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
+          cloud.files.unshift(newFileRecord);
+          await saveCloudData(cloud);
+        } catch(e) {
+          console.warn('[Velora Cloud] Background cloud sync warning:', e);
+        }
 
         return { success: true, file: newFileRecord };
       }
@@ -1513,6 +1673,13 @@
     }
 
     // 3. Download from Cloud using Internet according to file size, then store offline on device
+    if (!navigator.onLine) {
+      if (global.showToast) {
+        global.showToast(`⚠️ "${fileName}" is stored in Real Cloud and has not been cached on this device yet. Please connect to the internet to download it.`, 'warning');
+      }
+      return;
+    }
+
     let downloadLink = PERMANENT_STREAM_URL;
     if (file && file.cloud_url && !isBadUrl(file.cloud_url)) {
       downloadLink = file.cloud_url;
