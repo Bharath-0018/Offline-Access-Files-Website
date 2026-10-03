@@ -902,12 +902,23 @@
     loadStorageStats();
   }
 
-  global.saveServerUrl = function () {
+  global.saveServerUrl = async function () {
     const input = document.getElementById('setting-server-url');
     if (!input) return;
     const url = input.value.trim();
     api.setServerUrl(url);
     showToast('Velora server URL saved: ' + api.getServerUrl(), 'success');
+
+    try {
+      if (typeof fetchCloudData === 'function' && typeof saveCloudData === 'function') {
+        const cloud = await fetchCloudData(false);
+        cloud.backend_server_url = url;
+        await saveCloudData(cloud);
+        showToast('Synced server connection with all devices & friends!', 'info');
+      }
+    } catch(e) {
+      console.warn('Could not sync server URL to cloud registry:', e);
+    }
   };
 
   // --- Auth View (Sign In / Sign Up / Offline OTP Modal) ---

@@ -209,6 +209,7 @@
     let cloudFiles = [];
     let deletedIds = [];
     let deletedNames = [];
+    let backendServerUrl = '';
 
     const ghToken = getGhToken();
 
@@ -232,6 +233,7 @@
             if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
             if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
             if (Array.isArray(regJson.deleted_names)) deletedNames = regJson.deleted_names;
+            if (regJson.backend_server_url) backendServerUrl = regJson.backend_server_url;
             registryLoaded = true;
           }
         }
@@ -252,6 +254,7 @@
             if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
             if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
             if (Array.isArray(regJson.deleted_names)) deletedNames = regJson.deleted_names;
+            if (regJson.backend_server_url) backendServerUrl = regJson.backend_server_url;
           }
         }
       } catch (regErr) {
@@ -420,9 +423,16 @@
       users: cloudUsers,
       files: cloudFiles,
       deleted_ids: Array.from(allDeletedIds),
-      deleted_names: Array.from(new Set(deletedNames || []))
+      deleted_names: Array.from(new Set(deletedNames || [])),
+      backend_server_url: backendServerUrl || ''
     };
     _lastFetchTime = Date.now();
+
+    if (backendServerUrl && !localStorage.getItem('velora_server_url') && global.api) {
+      global.api.setServerUrl(backendServerUrl);
+      global.api.fallbackMode = false;
+      global.api.isConnected = true;
+    }
 
     try {
       localStorage.setItem('velora_offline_files', JSON.stringify(cloudFiles));
@@ -459,6 +469,7 @@
     try {
       const cleanData = {
         version: 1,
+        backend_server_url: (data && data.backend_server_url !== undefined) ? data.backend_server_url : ((_cachedCloudData && _cachedCloudData.backend_server_url) || (global.api ? global.api.serverUrl : '') || ''),
         last_updated: Date.now(),
         users: Array.isArray(data.users) ? data.users : [],
         files: Array.isArray(data.files) ? data.files : [],

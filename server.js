@@ -41,7 +41,8 @@ function sendJson(res, statusCode, data) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Total-Chunks, Range'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Total-Chunks, Range, X-Requested-With, Accept, Cache-Control',
+    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
   });
   res.end(JSON.stringify(data));
 }
@@ -138,7 +139,8 @@ const requestHandler = async (req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Total-Chunks, Range'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Upload-Id, X-Chunk-Index, X-Total-Chunks, Range, X-Requested-With, Accept, Cache-Control',
+      'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
     });
     res.end();
     return;

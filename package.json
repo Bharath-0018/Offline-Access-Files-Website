@@ -7,6 +7,9 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Bharath-0018/Offline-Access-Files-Website.git"

@@ -5,7 +5,7 @@ $repoPath = "c:\Users\VSB\Downloads\Offline-Access-Files-Website-main\Offline-Ac
 
 Set-Location $repoPath
 & $git add -A
-& $git commit -m "fix: resolve allDeletedNames ReferenceError, unblock tunnel URLs, and fix cross-device pendrive playback"
+& $git commit -m "feat: add render.yaml blueprint, cross-origin video CORS expose headers, and backend auto-discovery"
 & $git pull --rebase "https://$($token)@github.com/Bharath-0018/Offline-Access-Files-Website.git" main
 & $git push "https://$($token)@github.com/Bharath-0018/Offline-Access-Files-Website.git" main
 Write-Host "Git rebase & push completed successfully!"
