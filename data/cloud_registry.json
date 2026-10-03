@@ -1,6 +1,7 @@
 {
   "version": 1,
-  "last_updated": 1791021849360,
+  "backend_server_url": "",
+  "last_updated": 1791023293429,
   "users": [
     {
       "id": "user_1791010801946_tj6al",
@@ -73,9 +74,13 @@
         {
           "token": "cloud_token_1791021495896_u0ksi",
           "createdAt": 1791021495896
+        },
+        {
+          "token": "cloud_token_1791023293428_hihol",
+          "createdAt": 1791023293428
         }
       ],
-      "activeFriendsCount": 1,
+      "activeFriendsCount": 2,
       "maxAllowedFriends": 5
     }
   ],
@@ -105,7 +110,9 @@
       "mime_type": "video/x-matroska",
       "created_at": 1791021419032,
       "user_id": "c4adce24-5224-4c40-aad0-dc8122155642",
-      "user_email": "bharathperumal09@gmail.com"
+      "user_email": "bharathperumal09@gmail.com",
+      "cloud_url": null,
+      "stream_url": null
     }
   ],
   "deleted_ids": [
