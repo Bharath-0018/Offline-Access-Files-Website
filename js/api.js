@@ -18,13 +18,18 @@
     });
   }
 
-  async function idbPutBlob(id, blob) {
+  async function idbPutBlob(id, blob, fileName = null) {
     try {
       const db = await getIDB();
       if (!db) return;
       return new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).put(blob, id);
+        const store = tx.objectStore(IDB_STORE);
+        store.put(blob, id);
+        if (fileName && typeof fileName === 'string') {
+          const fnKey = 'fn_' + fileName.trim().toLowerCase();
+          store.put(blob, fnKey);
+        }
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
@@ -33,37 +38,104 @@
     }
   }
 
-  async function idbGetBlob(id) {
+  async function idbGetBlob(id, fileName = null) {
     try {
       const db = await getIDB();
       if (!db) return null;
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, 'readonly');
-        const req = tx.objectStore(IDB_STORE).get(id);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        const store = tx.objectStore(IDB_STORE);
+        const req1 = store.get(id);
+        req1.onsuccess = () => {
+          if (req1.result) {
+            return resolve(req1.result);
+          }
+          if (fileName && typeof fileName === 'string') {
+            const fnKey = 'fn_' + fileName.trim().toLowerCase();
+            const req2 = store.get(fnKey);
+            req2.onsuccess = () => resolve(req2.result || null);
+            req2.onerror = () => resolve(null);
+          } else {
+            resolve(null);
+          }
+        };
+        req1.onerror = () => resolve(null);
       });
     } catch (e) {
       return null;
     }
   }
 
-  async function idbDeleteBlob(id) {
+  async function idbDeleteBlob(id, fileName = null) {
     try {
       const db = await getIDB();
       if (!db) return;
       return new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).delete(id);
+        const store = tx.objectStore(IDB_STORE);
+        store.delete(id);
+        if (fileName && typeof fileName === 'string') {
+          store.delete('fn_' + fileName.trim().toLowerCase());
+        }
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
     } catch (e) {}
   }
 
+  function getTombstones() {
+    try {
+      const raw = localStorage.getItem('velora_tombstones');
+      const data = raw ? JSON.parse(raw) : { ids: [], names: [] };
+      if (!Array.isArray(data.ids)) data.ids = [];
+      if (!Array.isArray(data.names)) data.names = [];
+      return data;
+    } catch (e) {
+      return { ids: [], names: [] };
+    }
+  }
+
+  function addTombstone(id, name, originalName, cloudUrl) {
+    try {
+      const ts = getTombstones();
+      if (id && !ts.ids.includes(id)) ts.ids.push(id);
+      const clean = (s) => (s || '').trim().toLowerCase();
+      if (name && !ts.names.includes(clean(name))) ts.names.push(clean(name));
+      if (originalName && !ts.names.includes(clean(originalName))) ts.names.push(clean(originalName));
+      if (cloudUrl) {
+        const parts = cloudUrl.split('/');
+        const last = decodeURIComponent(parts[parts.length - 1].split('?')[0]);
+        if (last && !ts.names.includes(clean(last))) ts.names.push(clean(last));
+      }
+      localStorage.setItem('velora_tombstones', JSON.stringify(ts));
+      if (!window._deletedSessionIds) window._deletedSessionIds = new Set();
+      if (id) window._deletedSessionIds.add(id);
+    } catch (e) {}
+  }
+
+  function isTombstoned(f) {
+    if (!f) return false;
+    if (window._deletedSessionIds && f.id && window._deletedSessionIds.has(f.id)) return true;
+    const ts = getTombstones();
+    if (f.id && ts.ids.includes(f.id)) return true;
+    const n = (f.name || '').trim().toLowerCase();
+    const on = (f.original_name || '').trim().toLowerCase();
+    if (n && ts.names.includes(n)) return true;
+    if (on && ts.names.includes(on)) return true;
+    if (f.cloud_url) {
+      const parts = f.cloud_url.split('/');
+      const last = decodeURIComponent(parts[parts.length - 1].split('?')[0]).toLowerCase();
+      if (last && ts.names.includes(last)) return true;
+    }
+    return false;
+  }
+
   global.idbPutBlob = idbPutBlob;
   global.idbGetBlob = idbGetBlob;
   global.idbDeleteBlob = idbDeleteBlob;
+  global.getTombstones = getTombstones;
+  global.addTombstone = addTombstone;
+  global.isTombstoned = isTombstoned;
 
   // --- REAL ONLINE CLOUD STORAGE & CENTRAL DATABASE ENGINE ---
   const GITHUB_OWNER = 'Bharath-0018';
@@ -87,31 +159,72 @@
       return _cachedCloudData;
     }
 
+    let localFiles = [];
+    try {
+      localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+      if (!Array.isArray(localFiles)) localFiles = [];
+    } catch(e) {}
+
     let cloudUsers = [];
     let cloudFiles = [];
     let deletedIds = [];
     let deletedNames = [];
 
-    // 1. Fetch Master Cloud Registry from GitHub (Permanent Central Database)
+    const ghToken = getGhToken();
+
+    // 1. Fetch Master Cloud Registry from GitHub REST API first (0ms cache, bypasses Fastly CDN!)
+    let registryLoaded = false;
     try {
-      const registryUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/data/cloud_registry.json?t=${now}`;
-      const regRes = await fetch(registryUrl, { cache: 'no-store' });
+      const regRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/cloud_registry.json`, {
+        headers: {
+          'Authorization': `token ${ghToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        cache: 'no-store'
+      });
       if (regRes.ok) {
-        const regJson = await regRes.json();
-        if (regJson) {
-          if (Array.isArray(regJson.users)) cloudUsers = regJson.users;
-          if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
-          if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
-          if (Array.isArray(regJson.deleted_names)) deletedNames = regJson.deleted_names;
+        const regContent = await regRes.json();
+        if (regContent && regContent.content) {
+          const decodedStr = decodeURIComponent(escape(atob(regContent.content.replace(/\s/g, ''))));
+          const regJson = JSON.parse(decodedStr);
+          if (regJson) {
+            if (Array.isArray(regJson.users)) cloudUsers = regJson.users;
+            if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
+            if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
+            if (Array.isArray(regJson.deleted_names)) deletedNames = regJson.deleted_names;
+            registryLoaded = true;
+          }
         }
       }
-    } catch (regErr) {
-      console.warn('[Velora Cloud] GitHub registry fetch warning:', regErr);
+    } catch (apiRegErr) {
+      console.warn('[Velora Cloud] GitHub REST API registry fetch warning:', apiRegErr);
     }
+
+    // Fallback to raw CDN if REST API was unavailable
+    if (!registryLoaded) {
+      try {
+        const registryUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/data/cloud_registry.json?t=${now}`;
+        const regRes = await fetch(registryUrl, { cache: 'no-store' });
+        if (regRes.ok) {
+          const regJson = await regRes.json();
+          if (regJson) {
+            if (Array.isArray(regJson.users)) cloudUsers = regJson.users;
+            if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
+            if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
+            if (Array.isArray(regJson.deleted_names)) deletedNames = regJson.deleted_names;
+          }
+        }
+      } catch (regErr) {
+        console.warn('[Velora Cloud] GitHub registry fetch warning:', regErr);
+      }
+    }
+
+    const curUser = JSON.parse(localStorage.getItem('cloud_user') || 'null');
+    const curEmail = (curUser && curUser.email) ? curUser.email.toLowerCase() : '';
+    const curUid = curUser ? curUser.id : 'usr_master_bharath';
 
     // 2. Real-Time Auto-Discovery: Scan GitHub physical uploads repository directory
     try {
-      const ghToken = getGhToken();
       const uploadsRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/uploads`, {
         headers: {
           'Authorization': `token ${ghToken}`,
@@ -128,8 +241,9 @@
               let cleanName = item.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
               let originalName = item.name.replace(/^file_\d+_/, '');
 
-              // Check if deleted!
-              if (deletedIds.includes(item.name) ||
+              // Check if tombstoned or deleted!
+              if (isTombstoned({ id: item.name, name: cleanName, original_name: originalName, cloud_url: item.download_url }) ||
+                  deletedIds.includes(item.name) ||
                   deletedIds.includes('gh_' + (item.sha ? item.sha.substring(0, 12) : '')) ||
                   deletedNames.includes(item.name) ||
                   deletedNames.includes(cleanName) ||
@@ -137,7 +251,8 @@
                 return;
               }
 
-              const alreadyExists = cloudFiles.some(f => f.name === item.name || (f.cloud_url && f.cloud_url.includes(item.name)) || f.original_name === originalName || f.name === cleanName);
+              const alreadyExists = cloudFiles.some(f => f.name === item.name || (f.cloud_url && f.cloud_url.includes(item.name)) || f.original_name === originalName || f.name === cleanName) ||
+                                    localFiles.some(f => f.name === item.name || (f.cloud_url && f.cloud_url.includes(item.name)) || f.original_name === originalName || f.name === cleanName);
               if (!alreadyExists) {
                 let ext = item.name.split('.').pop().toLowerCase();
                 let cat = 'others';
@@ -148,8 +263,8 @@
 
                 cloudFiles.push(sanitizeFile({
                   id: 'gh_' + (item.sha ? item.sha.substring(0, 12) : Date.now()),
-                  user_id: 'usr_master_bharath',
-                  user_email: 'bharathperumal09@gmail.com',
+                  user_id: curUid,
+                  user_email: curEmail,
                   name: cleanName,
                   original_name: originalName,
                   category: cat,
@@ -170,7 +285,6 @@
 
     // 3. Real-Time Auto-Discovery: Scan GitHub Release Vault assets (Files up to 2GB)
     try {
-      const ghToken = getGhToken();
       const relRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/${GITHUB_RELEASE_ID}/assets`, {
         headers: {
           'Authorization': `token ${ghToken}`,
@@ -186,8 +300,9 @@
             let cleanName = asset.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
             let originalName = asset.name.replace(/^file_\d+_/, '');
 
-            // Check if deleted!
-            if (deletedIds.includes(asset.name) ||
+            // Check if tombstoned or deleted!
+            if (isTombstoned({ id: 'rel_' + asset.id, name: cleanName, original_name: originalName, cloud_url: asset.browser_download_url }) ||
+                deletedIds.includes(asset.name) ||
                 deletedIds.includes('rel_' + asset.id) ||
                 deletedNames.includes(asset.name) ||
                 deletedNames.includes(cleanName) ||
@@ -195,7 +310,8 @@
               return;
             }
 
-            const alreadyExists = cloudFiles.some(f => f.name === asset.name || (f.cloud_url && f.cloud_url.includes(asset.name)) || f.original_name === originalName || f.name === cleanName);
+            const alreadyExists = cloudFiles.some(f => f.name === asset.name || (f.cloud_url && f.cloud_url.includes(asset.name)) || f.original_name === originalName || f.name === cleanName) ||
+                                  localFiles.some(f => f.name === asset.name || (f.cloud_url && f.cloud_url.includes(asset.name)) || f.original_name === originalName || f.name === cleanName);
             if (!alreadyExists) {
               let ext = asset.name.split('.').pop().toLowerCase();
               let cat = 'others';
@@ -206,8 +322,8 @@
 
               cloudFiles.push(sanitizeFile({
                 id: 'rel_' + asset.id,
-                user_id: 'usr_master_bharath',
-                user_email: 'bharathperumal09@gmail.com',
+                user_id: curUid,
+                user_email: curEmail,
                 name: cleanName,
                 original_name: originalName,
                 category: cat,
@@ -225,19 +341,53 @@
       console.warn('[Velora Cloud] Release vault scan warning:', relScanErr);
     }
 
-    if (deletedIds.length > 0 || deletedNames.length > 0) {
-      cloudFiles = cloudFiles.filter(f =>
-        !deletedIds.includes(f.id) &&
-        (!f.name || !deletedNames.includes(f.name)) &&
-        (!f.original_name || !deletedNames.includes(f.original_name))
+    // 4. Merge Local Files: Never drop freshly uploaded files due to CDN edge latency
+    localFiles.forEach(lf => {
+      if (isTombstoned(lf) || deletedIds.includes(lf.id)) return;
+      const cIdx = cloudFiles.findIndex(cf =>
+        cf.id === lf.id ||
+        (cf.name && lf.name && cf.name === lf.name) ||
+        (cf.original_name && lf.original_name && cf.original_name === lf.original_name)
       );
+      if (cIdx === -1) {
+        cloudFiles.unshift(lf);
+      } else {
+        // Preserve local blob stream URL if present
+        if (lf.stream_url && lf.stream_url.startsWith('blob:')) {
+          cloudFiles[cIdx].stream_url = lf.stream_url;
+        }
+        if (lf.data_url) {
+          cloudFiles[cIdx].data_url = lf.data_url;
+        }
+      }
+    });
+
+    // 5. Filter out tombstones & deleted IDs/names
+    const ts = getTombstones();
+    const allDeletedIds = new Set([...deletedIds, ...(ts.ids || [])]);
+    const allDeletedNames = new Set([
+      ...deletedNames.map(s => s.toLowerCase()),
+      ...(ts.names || []).map(s => s.toLowerCase())
+    ]);
+    if (window._deletedSessionIds) {
+      window._deletedSessionIds.forEach(id => allDeletedIds.add(id));
     }
+
+    cloudFiles = cloudFiles.filter(f => {
+      if (isTombstoned(f)) return false;
+      if (allDeletedIds.has(f.id)) return false;
+      const n = (f.name || '').trim().toLowerCase();
+      const on = (f.original_name || '').trim().toLowerCase();
+      if (n && allDeletedNames.has(n)) return false;
+      if (on && allDeletedNames.has(on)) return false;
+      return true;
+    });
 
     _cachedCloudData = {
       users: cloudUsers,
       files: cloudFiles,
-      deleted_ids: deletedIds,
-      deleted_names: deletedNames
+      deleted_ids: Array.from(allDeletedIds),
+      deleted_names: Array.from(allDeletedNames)
     };
     _lastFetchTime = Date.now();
 
@@ -1108,9 +1258,12 @@
         const targetName = targetFile.name || targetFile.original_name || '';
         const targetCloudUrl = targetFile.cloud_url || '';
 
-        localFiles = localFiles.filter(f => f.id !== fileId);
+        // Add persistent tombstone immediately
+        addTombstone(fileId, targetFile.name, targetFile.original_name, targetCloudUrl);
+
+        localFiles = localFiles.filter(f => f.id !== fileId && (!targetName || (f.name !== targetName && f.original_name !== targetName)));
         localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
-        await idbDeleteBlob(fileId);
+        await idbDeleteBlob(fileId, targetName);
 
         // 2. Fetch fresh cloud registry
         const cloud = await fetchCloudData(true);
@@ -1122,6 +1275,10 @@
         const cloudTarget = cloud.files.find(f => f.id === fileId || (targetName && (f.name === targetName || f.original_name === targetName)));
         const fileToDeleteName = targetName || (cloudTarget ? (cloudTarget.name || cloudTarget.original_name) : '');
         const fileToDeleteUrl = targetCloudUrl || (cloudTarget ? (cloudTarget.cloud_url || cloudTarget.stream_url) : '');
+
+        if (cloudTarget) {
+          addTombstone(cloudTarget.id, cloudTarget.name, cloudTarget.original_name, fileToDeleteUrl);
+        }
 
         // Remove from cloud files list
         cloud.files = cloud.files.filter(f =>
@@ -1137,6 +1294,10 @@
         if (fileToDeleteName && !cloud.deleted_names.includes(fileToDeleteName)) {
           cloud.deleted_names.push(fileToDeleteName);
         }
+
+        const ts = getTombstones();
+        (ts.ids || []).forEach(id => { if (!cloud.deleted_ids.includes(id)) cloud.deleted_ids.push(id); });
+        (ts.names || []).forEach(name => { if (!cloud.deleted_names.includes(name)) cloud.deleted_names.push(name); });
 
         // 3. Physically delete from GitHub repo (data/uploads/)
         try {
@@ -1190,15 +1351,30 @@
 
         // 4. Physically delete from GitHub Release Vault if stored there
         try {
-          if (fileId.startsWith('rel_') || (fileToDeleteUrl && fileToDeleteUrl.includes('releases/download/'))) {
-            const ghToken = getGhToken();
-            const assetId = fileId.startsWith('rel_') ? fileId.replace('rel_', '') : null;
-            if (assetId) {
-              await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/assets/${assetId}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
-              });
+          const ghToken = getGhToken();
+          let assetId = fileId.startsWith('rel_') ? fileId.replace('rel_', '') : null;
+          if (!assetId && (fileToDeleteUrl && fileToDeleteUrl.includes('releases/download/'))) {
+            const assetsRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/${GITHUB_RELEASE_ID}/assets`, {
+              headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' },
+              cache: 'no-store'
+            });
+            if (assetsRes.ok) {
+              const assetsList = await assetsRes.json();
+              if (Array.isArray(assetsList)) {
+                const matchedAsset = assetsList.find(a =>
+                  (fileToDeleteUrl && a.browser_download_url && a.browser_download_url === fileToDeleteUrl) ||
+                  (fileToDeleteName && (a.name === fileToDeleteName || a.name.includes(fileToDeleteName.replace(/[^a-zA-Z0-9._-]/g, '_'))))
+                );
+                if (matchedAsset) assetId = matchedAsset.id;
+              }
             }
+          }
+
+          if (assetId) {
+            await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/assets/${assetId}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
+            });
           }
         } catch(relDelErr) {
           console.warn('[Velora Cloud] Release vault delete warning:', relDelErr);
@@ -1207,8 +1383,9 @@
         // 5. Commit updated master registry to GitHub
         await saveCloudData(cloud);
 
-        // 6. Keep local storage strictly matching cloud
-        localStorage.setItem('velora_offline_files', JSON.stringify(cloud.files));
+        // 6. Keep local storage strictly matching cloud and tombstone filtered
+        const finalFiles = cloud.files.filter(f => !isTombstoned(f));
+        localStorage.setItem('velora_offline_files', JSON.stringify(finalFiles));
 
         try {
           if (window.veloraSyncChannel) {
@@ -1461,7 +1638,7 @@
           });
         }
 
-        await idbPutBlob(fileId, file);
+        await idbPutBlob(fileId, file, file.name);
         const blobUrl = URL.createObjectURL(file);
         this.blobUrlCache.set(fileId, blobUrl);
 
@@ -1737,7 +1914,7 @@
     const sizeStr = file && file.size_bytes ? formatBytes(file.size_bytes) : '';
 
     // 1. Try local IndexedDB first (Zero-Internet: uses 0 KB mobile data if already saved!)
-    const blob = await idbGetBlob(fileId);
+    const blob = await idbGetBlob(fileId, fileName);
     if (blob) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1751,7 +1928,20 @@
       return;
     }
 
-    // 2. Try Base64 Data URL (Zero-Internet local cache)
+    // 2. Try In-Memory Blob URL Cache (Zero-Internet)
+    if (global.api && global.api.blobUrlCache && global.api.blobUrlCache.has(fileId)) {
+      const cachedUrl = global.api.blobUrlCache.get(fileId);
+      const a = document.createElement('a');
+      a.href = cachedUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      if (global.showToast) global.showToast(`⚡ Zero-Data Download: "${fileName}" (0 KB internet used)`, 'success');
+      return;
+    }
+
+    // 3. Try Base64 Data URL (Zero-Internet local cache)
     if (file && file.data_url) {
       const a = document.createElement('a');
       a.href = file.data_url;
@@ -1763,7 +1953,7 @@
       return;
     }
 
-    // 3. Download from Cloud using Internet according to file size, then store offline on device
+    // 4. Download from Cloud using Internet according to file size, then store offline on device
     if (!navigator.onLine) {
       if (global.showToast) {
         global.showToast(`⚠️ "${fileName}" is stored in Real Cloud and has not been cached on this device yet. Please connect to the internet to download it.`, 'warning');
@@ -1794,7 +1984,7 @@
       if (resp.ok) {
         const fetchedBlob = await resp.blob();
         // Immediately store in local IndexedDB so all future plays/downloads use ZERO INTERNET!
-        await idbPutBlob(fileId, fetchedBlob);
+        await idbPutBlob(fileId, fetchedBlob, fileName);
         const url = URL.createObjectURL(fetchedBlob);
         const a = document.createElement('a');
         a.href = url;

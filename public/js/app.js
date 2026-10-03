@@ -308,7 +308,11 @@
   async function loadDashboardRecentFiles() {
     try {
       const res = await api.getFiles({ sortBy: 'created_at', sortOrder: 'DESC' });
-      state.files = res.files || [];
+      state.files = (res.files || []).filter(f => {
+        if (window._deletedSessionIds && window._deletedSessionIds.has(f.id)) return false;
+        if (typeof window.isTombstoned === 'function' && window.isTombstoned(f)) return false;
+        return true;
+      });
       const container = document.getElementById('dash-recent-files');
       if (!container) return;
 
@@ -386,7 +390,11 @@
         sortBy: state.sortBy,
         sortOrder: state.sortOrder
       });
-      state.files = res.files || [];
+      state.files = (res.files || []).filter(f => {
+        if (window._deletedSessionIds && window._deletedSessionIds.has(f.id)) return false;
+        if (typeof window.isTombstoned === 'function' && window.isTombstoned(f)) return false;
+        return true;
+      });
 
       const container = document.getElementById('files-grid-container');
       if (!container) return;
@@ -498,7 +506,11 @@
 
     try {
       const res = await api.getFiles({ category: 'movies' });
-      const movies = res.files || [];
+      const movies = (res.files || []).filter(f => {
+        if (window._deletedSessionIds && window._deletedSessionIds.has(f.id)) return false;
+        if (typeof window.isTombstoned === 'function' && window.isTombstoned(f)) return false;
+        return true;
+      });
       state.files = movies;
       const grid = document.getElementById('movies-grid-container');
       if (!grid) return;
@@ -1530,17 +1542,20 @@
   global.deleteFilePrompt = async function (fileId) {
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
+      const targetFile = state.files.find(f => f.id === fileId) || {};
+      if (typeof window.addTombstone === 'function') {
+        window.addTombstone(fileId, targetFile.name, targetFile.original_name, targetFile.cloud_url);
+      }
+      if (!window._deletedSessionIds) window._deletedSessionIds = new Set();
+      window._deletedSessionIds.add(fileId);
+
       // Instantly remove card from DOM (Optimistic 0ms update!)
       const card = document.getElementById(`file-${fileId}`);
-      if (card) {
-        card.style.opacity = '0.3';
-        card.style.pointerEvents = 'none';
-      }
+      if (card) card.remove();
 
-      state.files = state.files.filter(f => f.id !== fileId);
+      state.files = state.files.filter(f => f.id !== fileId && (!targetFile.name || (f.name !== targetFile.name && f.original_name !== targetFile.original_name)));
 
       await api.deleteFile(fileId);
-      if (card) card.remove();
       showToast('File deleted successfully.', 'success');
 
       if (state.currentView === 'dashboard') {

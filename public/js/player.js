@@ -195,9 +195,10 @@
 
       // 1. Direct Zero-Internet Offline Playback from Device Storage (IndexedDB)
       let streamUrl = null;
+      const fileName = file.original_name || file.name || '';
       if (typeof global.idbGetBlob === 'function') {
         try {
-          const storedBlob = await global.idbGetBlob(file.id);
+          const storedBlob = await global.idbGetBlob(file.id, fileName);
           if (storedBlob) {
             streamUrl = URL.createObjectURL(storedBlob);
             if (global.api && global.api.blobUrlCache) {
@@ -260,10 +261,10 @@
 
       // If playing from cloud stream, cache in background so next time uses 0 KB internet!
       if (streamUrl.startsWith('http') && typeof global.idbPutBlob === 'function' && typeof global.idbGetBlob === 'function') {
-        global.idbGetBlob(file.id).then(existing => {
+        global.idbGetBlob(file.id, fileName).then(existing => {
           if (!existing) {
             fetch(streamUrl).then(r => r.ok ? r.blob() : null).then(blob => {
-              if (blob) global.idbPutBlob(file.id, blob);
+              if (blob) global.idbPutBlob(file.id, blob, fileName);
             }).catch(() => {});
           }
         }).catch(() => {});
