@@ -22,7 +22,7 @@
   ],
   "files": [
     {
-      "id": "file_1791013796426_664b",
+      "id": "file_1791015287949_oejo",
       "user_id": "user_1791010801946_tj6al",
       "user_email": "bharath006@gmail.com",
       "folder_id": null,
@@ -31,8 +31,8 @@
       "category": "movies",
       "mime_type": "video/matroska",
       "size_bytes": 3089082029,
-      "created_at": 1791013827553,
-      "updated_at": 1791013827553,
+      "created_at": 1791015304206,
+      "updated_at": 1791015304206,
       "cloud_url": null,
       "stream_url": null,
       "data_url": null
@@ -41,12 +41,15 @@
   "deleted_ids": [
     "file_1791004460404_rzoc",
     "sample.mp4",
-    "sample"
+    "sample",
+    "file_1791013796426_664b",
+    "rel_607450304"
   ],
   "deleted_names": [
     "sample.mp4",
     "sample",
     "test_file.txt",
-    "test_permanent.txt"
+    "test_permanent.txt",
+    "test cloud upload.txt"
   ]
 }
