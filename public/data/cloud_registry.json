@@ -1,38 +1,15 @@
 {
   "version": 1,
-  "last_updated": 1791006646593,
-  "users": [
-    {
-      "id": "usr_master_bharath",
-      "email": "bharathperumal09@gmail.com",
-      "name": "Bharath",
-      "password": "password123",
-      "role": "admin",
-      "created_at": 1790670000000
-    }
-  ],
-  "files": [
-    {
-      "id": "file_1791004460404_rzoc",
-      "user_id": "usr_master_bharath",
-      "user_email": "bharathperumal09@gmail.com",
-      "folder_id": null,
-      "name": "TamilPrint - Mandaadi (2026) Tamil HD DVD Print 1080pHD.mkv",
-      "original_name": "TamilPrint - Mandaadi (2026) Tamil HD DVD Print 1080pHD.mkv",
-      "category": "movies",
-      "mime_type": "video/matroska",
-      "size_bytes": 3089082029,
-      "created_at": 1791004485072,
-      "updated_at": 1791004485072,
-      "cloud_url": "./sample.mp4",
-      "stream_url": "./sample.mp4",
-      "data_url": null
-    }
-  ],
+  "last_updated": 1791008000000,
+  "users": [],
+  "files": [],
   "deleted_ids": [
     "gh_3d1191cc6bfa",
     "gh_912b3fff795b",
-    "file_1790841295030"
+    "file_1790841295030",
+    "file_1791004460404_rzoc",
+    "sample.mp4",
+    "sample"
   ],
   "deleted_names": [
     "test file.txt",
@@ -41,6 +18,9 @@
     "test_permanent.txt",
     "SIDDHARTH _Resume_Final.pdf",
     "SIDDHARTH  Resume Final.pdf",
-    "file_1790841295030_SIDDHARTH__Resume_Final.pdf"
+    "file_1790841295030_SIDDHARTH__Resume_Final.pdf",
+    "TamilPrint - Mandaadi (2026) Tamil HD DVD Print 1080pHD.mkv",
+    "sample.mp4",
+    "sample"
   ]
 }

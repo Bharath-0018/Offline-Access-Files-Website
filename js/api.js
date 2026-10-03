@@ -225,18 +225,6 @@
       console.warn('[Velora Cloud] Release vault scan warning:', relScanErr);
     }
 
-    // Default Master User (Bharath)
-    if (!cloudUsers.some(u => (u.email || '').toLowerCase() === 'bharathperumal09@gmail.com')) {
-      cloudUsers.unshift({
-        id: 'usr_master_bharath',
-        email: 'bharathperumal09@gmail.com',
-        name: 'Bharath',
-        password: 'password123',
-        role: 'admin',
-        created_at: 1790670000000
-      });
-    }
-
     if (deletedIds.length > 0 || deletedNames.length > 0) {
       cloudFiles = cloudFiles.filter(f =>
         !deletedIds.includes(f.id) &&
@@ -272,26 +260,17 @@
            l.includes('invalid') ||
            l.includes('commondatastorage.googleapis.com') ||
            l.includes('accessdenied') ||
+           l.includes('sample.mp4') ||
            (l.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(url)));
   }
 
-  const PERMANENT_STREAM_URL = './sample.mp4';
-
   function sanitizeFile(f) {
     if (!f) return f;
-    const isVid = f.category === 'movies' || f.category === 'videos' || (f.mime_type && f.mime_type.startsWith('video/'));
-    const permanentVid = PERMANENT_STREAM_URL;
     if (isBadUrl(f.cloud_url)) {
-      f.cloud_url = isVid ? permanentVid : null;
+      f.cloud_url = null;
     }
     if (isBadUrl(f.stream_url)) {
-      f.stream_url = isVid ? permanentVid : null;
-    }
-    if (isVid && (!f.cloud_url || isBadUrl(f.cloud_url))) {
-      f.cloud_url = permanentVid;
-    }
-    if (isVid && (!f.stream_url || isBadUrl(f.stream_url))) {
-      f.stream_url = permanentVid;
+      f.stream_url = null;
     }
     return f;
   }
@@ -621,7 +600,6 @@
     async uploadToCloudHost(file, onProgress) {
       const ext = (file.name || '').split('.').pop().toLowerCase();
       const isVideo = ['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext) || (file.type && file.type.startsWith('video/'));
-      const permanentStream = PERMANENT_STREAM_URL;
 
       const _p1 = ['g', 'h', 'p'].join('');
       const _p2 = 'JmM7P7OR3PHuSEl83oYLDRkxrGT5kR2NM12f';
@@ -697,14 +675,6 @@
         }
       } catch (relErr) {
         console.warn('[Velora Cloud] GitHub Release upload error:', relErr);
-      }
-
-      // 3. Guaranteed Permanent High-Speed Video Stream fallback (NEVER EXPIRES)
-      if (isVideo) {
-        return {
-          directUrl: permanentStream,
-          rawUrl: permanentStream
-        };
       }
 
       return null;
@@ -1398,16 +1368,16 @@
     }
 
     getDownloadUrl(fileId) {
+      if (this.blobUrlCache.has(fileId)) {
+        return this.blobUrlCache.get(fileId);
+      }
       const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
       const file = files.find(f => f.id === fileId);
-      const isVid = file && (file.category === 'movies' || file.category === 'videos' || (file.mime_type && file.mime_type.startsWith('video/')));
-      const permanentVid = PERMANENT_STREAM_URL;
 
       if (file) {
         if (file.data_url) return file.data_url;
         if (file.cloud_url && !isBadUrl(file.cloud_url)) return file.cloud_url;
         if (file.stream_url && !isBadUrl(file.stream_url)) return file.stream_url;
-        if (isVid) return permanentVid;
       }
 
       if (this.serverUrl && !isBadUrl(this.serverUrl) && !this.fallbackMode) {
@@ -1424,21 +1394,16 @@
       }
       const files = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
       const file = files.find(f => f.id === fileId);
-      const isVid = file && (file.category === 'movies' || file.category === 'videos' || (file.mime_type && file.mime_type.startsWith('video/')));
-      const permanentVid = PERMANENT_STREAM_URL;
 
       if (file) {
-        if (file.cloud_url && !isBadUrl(file.cloud_url)) {
-          return file.cloud_url;
-        }
         if (file.stream_url && !isBadUrl(file.stream_url)) {
           return file.stream_url;
         }
+        if (file.cloud_url && !isBadUrl(file.cloud_url)) {
+          return file.cloud_url;
+        }
         if (file.data_url) {
           return file.data_url;
-        }
-        if (isVid) {
-          return permanentVid;
         }
       }
 
@@ -1447,7 +1412,7 @@
         return `${this.getApiBase()}/files/stream/${fileId}${token}`;
       }
 
-      return isVid ? permanentVid : '';
+      return '';
     }
 
     // --- Resumable 5MB Chunk Streaming Uploader ---
@@ -1525,8 +1490,7 @@
         }
 
         const isVideo = cat === 'movies' || (file.type && file.type.startsWith('video/'));
-        const permanentVid = PERMANENT_STREAM_URL;
-        let cloudUrl = isVideo ? permanentVid : null;
+        let cloudUrl = null;
 
         // Commit file permanently via GitHub API using internet when available
         try {
@@ -1807,11 +1771,18 @@
       return;
     }
 
-    let downloadLink = PERMANENT_STREAM_URL;
+    let downloadLink = null;
     if (file && file.cloud_url && !isBadUrl(file.cloud_url)) {
       downloadLink = file.cloud_url;
     } else if (file && file.stream_url && !isBadUrl(file.stream_url)) {
       downloadLink = file.stream_url;
+    }
+
+    if (!downloadLink) {
+      if (global.showToast) {
+        global.showToast(`⚠️ No cloud download URL found for "${fileName}".`, 'error');
+      }
+      return;
     }
 
     try {
@@ -1833,7 +1804,7 @@
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 10000);
         if (global.showToast) {
-          global.showToast(`✅ Saved to Device Storage! "${fileName}" can now be accessed 100% Offline!`, 'success');
+          global.showToast(`✅ Saved to Device Storage! "${fileName}" can now be accessed 100% Offline with 0 KB data!`, 'success');
         }
         return;
       }
@@ -1850,13 +1821,35 @@
     document.body.removeChild(a);
   };
 
-  // Auto-clean any legacy Google Cloud Storage URLs from localStorage
+  // Auto-clean legacy dummy users, default files, and sample.mp4 from localStorage & IndexedDB
   try {
-    const rawLocalFiles = localStorage.getItem('velora_offline_files');
-    if (rawLocalFiles && (rawLocalFiles.includes('commondatastorage.googleapis.com') || rawLocalFiles.includes('accessdenied'))) {
-      const parsed = JSON.parse(rawLocalFiles);
-      const cleaned = parsed.map(sanitizeFile);
-      localStorage.setItem('velora_offline_files', JSON.stringify(cleaned));
+    const purgeIds = ['usr_master_bharath', 'file_1791004460404_rzoc'];
+    const curUser = JSON.parse(localStorage.getItem('cloud_user') || 'null');
+    if (curUser && (curUser.id === 'usr_master_bharath' || (curUser.email || '').toLowerCase() === 'bharathperumal09@gmail.com')) {
+      localStorage.removeItem('cloud_user');
+      localStorage.removeItem('velora_token');
+      localStorage.removeItem('velora_refresh_token');
+      sessionStorage.clear();
+    }
+    let rawFiles = localStorage.getItem('velora_offline_files');
+    if (rawFiles) {
+      let parsed = JSON.parse(rawFiles);
+      if (Array.isArray(parsed)) {
+        parsed = parsed.filter(f => !purgeIds.includes(f.id) && !f.name.includes('Mandaadi') && !f.name.includes('sample.mp4'));
+        localStorage.setItem('velora_offline_files', JSON.stringify(parsed));
+      }
+    }
+    let rawUsers = localStorage.getItem('velora_offline_users');
+    if (rawUsers) {
+      let parsedUsers = JSON.parse(rawUsers);
+      if (Array.isArray(parsedUsers)) {
+        parsedUsers = parsedUsers.filter(u => u.id !== 'usr_master_bharath' && (u.email || '').toLowerCase() !== 'bharathperumal09@gmail.com');
+        localStorage.setItem('velora_offline_users', JSON.stringify(parsedUsers));
+      }
+    }
+    if (typeof idbDeleteBlob === 'function') {
+      idbDeleteBlob('file_1791004460404_rzoc');
+      idbDeleteBlob('sample.mp4');
     }
   } catch (e) {}
 

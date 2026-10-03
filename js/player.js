@@ -220,7 +220,6 @@
         streamUrl = global.api.getStreamUrl(file.id);
       }
 
-      const permanentVid = './sample.mp4';
       const isBad = (url) => {
         if (!url || typeof url !== 'string') return true;
         const l = url.toLowerCase();
@@ -232,6 +231,7 @@
                l.includes('invalid') ||
                l.includes('commondatastorage.googleapis.com') ||
                l.includes('accessdenied') ||
+               l.includes('sample.mp4') ||
                (l.startsWith('blob:') && (!global.api || !global.api.blobUrlCache || !global.api.blobUrlCache.has(file.id)));
       };
 
@@ -241,8 +241,32 @@
         } else if (file.data_url) {
           streamUrl = file.data_url;
         } else {
-          streamUrl = permanentVid;
+          streamUrl = null;
         }
+      }
+
+      if (!streamUrl) {
+        if (!navigator.onLine) {
+          if (global.showToast) {
+            global.showToast(`⚠️ "${file.original_name || file.name}" is not cached on this device yet. Please connect to internet to cache it for offline play.`, 'warning');
+          }
+        } else {
+          if (global.showToast) {
+            global.showToast(`⚠️ No playable stream found for "${file.original_name || file.name}".`, 'error');
+          }
+        }
+        return;
+      }
+
+      // If playing from cloud stream, cache in background so next time uses 0 KB internet!
+      if (streamUrl.startsWith('http') && typeof global.idbPutBlob === 'function' && typeof global.idbGetBlob === 'function') {
+        global.idbGetBlob(file.id).then(existing => {
+          if (!existing) {
+            fetch(streamUrl).then(r => r.ok ? r.blob() : null).then(blob => {
+              if (blob) global.idbPutBlob(file.id, blob);
+            }).catch(() => {});
+          }
+        }).catch(() => {});
       }
 
       this.currentStreamUrl = streamUrl;
@@ -316,23 +340,16 @@
       if (!this.isOpen() || !this.currentFile) return;
       console.warn('[Velora Player] Native video playback error:', e);
 
-      // Seamlessly try resilient fallbacks:
-      if (!this._triedFallback) {
+      // Seamlessly switch to MoviPlayer WebCodecs engine if available
+      if (!this._triedFallback && this.movi && window.customElements && customElements.get('movi-player')) {
         this._triedFallback = true;
-        const backupUrl = './sample.mp4';
-        this._showOsd('Buffering Local High-Speed Stream...');
-        this.currentStreamUrl = backupUrl;
-        this.video.src = backupUrl;
-        this.video.load();
-        this.video.play().catch(() => {});
+        this._useMoviPlayer(this.currentStreamUrl);
         return;
       }
 
-      // Seamlessly switch to MoviPlayer WebCodecs engine
-      if (this.movi && window.customElements && customElements.get('movi-player')) {
-        this._useMoviPlayer(this.currentStreamUrl);
-      } else {
-        this._showOsd('Buffering stream. Press Play to start.');
+      this._showOsd('Video format error. Please click Download to play offline.');
+      if (global.showToast) {
+        global.showToast('Video format error. Please click Download to play offline in VLC.', 'warning');
       }
     }
 
