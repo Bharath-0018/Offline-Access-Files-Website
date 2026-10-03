@@ -10,8 +10,9 @@ $h = @{ 'Authorization' = "token $tok"; 'User-Agent' = 'Velora-Test' }
 
 # 1. Fetch Master Cloud Registry Database from GitHub
 Write-Host "[Step 1] Fetching Master Cloud Registry Database from GitHub..."
-$regUrl = "https://raw.githubusercontent.com/$owner/$repo/main/data/cloud_registry.json"
-$reg = Invoke-RestMethod -Uri $regUrl
+$regRes = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/contents/data/cloud_registry.json" -Headers $h
+$decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($regRes.content))
+$reg = $decoded | ConvertFrom-Json
 Write-Host "  - Master Registry Version: $($reg.version)"
 Write-Host "  - Active Users: $($reg.users.Count) (All old accounts deleted - Ready for fresh sign-up)"
 Write-Host "  - Active Files: $($reg.files.Count) (Default/flower video deleted - 100% clean state)"
