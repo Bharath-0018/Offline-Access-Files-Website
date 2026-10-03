@@ -18,6 +18,66 @@
           "createdAt": 1791010801946
         }
       ]
+    },
+    {
+      "id": "user_1790755645244_np75k",
+      "email": "thalapathybharath001@gmail.com",
+      "name": "thalapathybharath001",
+      "password": "Bharath@2006",
+      "is_verified": true,
+      "storageQuotaBytes": 53687091200,
+      "created_at": 1790755645244,
+      "sessions": [
+        {
+          "token": "offline_token_1790755645343_wq2e8",
+          "createdAt": 1790755645343
+        },
+        {
+          "token": "offline_token_1790755645508_cdicz",
+          "createdAt": 1790755645508
+        }
+      ],
+      "activeFriendsCount": 2,
+      "maxAllowedFriends": 5
+    },
+    {
+      "id": "user_1790762842673_6286c",
+      "email": "hari11@gmail.com",
+      "name": "hari11",
+      "password": "hari@2006",
+      "is_verified": true,
+      "storageQuotaBytes": 53687091200,
+      "created_at": 1790762842673,
+      "sessions": [
+        {
+          "token": "offline_token_1790762842925_9trpf",
+          "createdAt": 1790762842925
+        },
+        {
+          "token": "offline_token_1790762870147_ws5fb",
+          "createdAt": 1790762870147
+        }
+      ],
+      "activeFriendsCount": 2,
+      "maxAllowedFriends": 5
+    },
+    {
+      "id": "usr_master_bharath",
+      "email": "bharathperumal09@gmail.com",
+      "name": "bharathperumal09",
+      "password": "Bharath@2006",
+      "role": "admin",
+      "is_verified": true,
+      "storageQuotaBytes": 53687091200,
+      "created_at": 1791021494442,
+      "sessions": [
+        {
+          "token": "cloud_token_1791021495896_u0ksi",
+          "createdAt": 1791021495896
+        }
+      ],
+      "activeFriendsCount": 1,
+      "maxAllowedFriends": 5
     }
   ],
   "files": [
