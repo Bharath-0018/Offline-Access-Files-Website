@@ -90,6 +90,7 @@
     let cloudUsers = [];
     let cloudFiles = [];
     let deletedIds = [];
+    let deletedNames = [];
 
     // 1. Fetch Master Cloud Registry from GitHub (Permanent Central Database)
     try {
@@ -101,6 +102,7 @@
           if (Array.isArray(regJson.users)) cloudUsers = regJson.users;
           if (Array.isArray(regJson.files)) cloudFiles = regJson.files.map(sanitizeFile);
           if (Array.isArray(regJson.deleted_ids)) deletedIds = regJson.deleted_ids;
+          if (Array.isArray(regJson.deleted_names)) deletedNames = regJson.deleted_names;
         }
       }
     } catch (regErr) {
@@ -122,10 +124,21 @@
         const items = await uploadsRes.json();
         if (Array.isArray(items)) {
           items.forEach(item => {
-            if (item.type === 'file' && item.name !== '.gitkeep') {
-              const alreadyExists = cloudFiles.some(f => f.name === item.name || (f.cloud_url && f.cloud_url.includes(item.name)));
+            if (item.type === 'file' && item.name !== '.gitkeep' && !item.name.startsWith('test_')) {
+              let cleanName = item.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
+              let originalName = item.name.replace(/^file_\d+_/, '');
+
+              // Check if deleted!
+              if (deletedIds.includes(item.name) ||
+                  deletedIds.includes('gh_' + (item.sha ? item.sha.substring(0, 12) : '')) ||
+                  deletedNames.includes(item.name) ||
+                  deletedNames.includes(cleanName) ||
+                  deletedNames.includes(originalName)) {
+                return;
+              }
+
+              const alreadyExists = cloudFiles.some(f => f.name === item.name || (f.cloud_url && f.cloud_url.includes(item.name)) || f.original_name === originalName || f.name === cleanName);
               if (!alreadyExists) {
-                let cleanName = item.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
                 let ext = item.name.split('.').pop().toLowerCase();
                 let cat = 'others';
                 if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) cat = 'movies';
@@ -138,7 +151,7 @@
                   user_id: 'usr_master_bharath',
                   user_email: 'bharathperumal09@gmail.com',
                   name: cleanName,
-                  original_name: cleanName,
+                  original_name: originalName,
                   category: cat,
                   mime_type: cat === 'movies' ? 'video/mp4' : cat === 'documents' ? 'application/pdf' : 'application/octet-stream',
                   size_bytes: item.size || 0,
@@ -170,9 +183,20 @@
         const assets = await relRes.json();
         if (Array.isArray(assets)) {
           assets.forEach(asset => {
-            const alreadyExists = cloudFiles.some(f => f.name === asset.name || (f.cloud_url && f.cloud_url.includes(asset.name)));
+            let cleanName = asset.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
+            let originalName = asset.name.replace(/^file_\d+_/, '');
+
+            // Check if deleted!
+            if (deletedIds.includes(asset.name) ||
+                deletedIds.includes('rel_' + asset.id) ||
+                deletedNames.includes(asset.name) ||
+                deletedNames.includes(cleanName) ||
+                deletedNames.includes(originalName)) {
+              return;
+            }
+
+            const alreadyExists = cloudFiles.some(f => f.name === asset.name || (f.cloud_url && f.cloud_url.includes(asset.name)) || f.original_name === originalName || f.name === cleanName);
             if (!alreadyExists) {
-              let cleanName = asset.name.replace(/^file_\d+_/, '').replace(/_/g, ' ');
               let ext = asset.name.split('.').pop().toLowerCase();
               let cat = 'others';
               if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) cat = 'movies';
@@ -185,7 +209,7 @@
                 user_id: 'usr_master_bharath',
                 user_email: 'bharathperumal09@gmail.com',
                 name: cleanName,
-                original_name: cleanName,
+                original_name: originalName,
                 category: cat,
                 mime_type: cat === 'movies' ? 'video/mp4' : 'application/octet-stream',
                 size_bytes: asset.size || 0,
@@ -213,14 +237,19 @@
       });
     }
 
-    if (deletedIds.length > 0) {
-      cloudFiles = cloudFiles.filter(f => !deletedIds.includes(f.id));
+    if (deletedIds.length > 0 || deletedNames.length > 0) {
+      cloudFiles = cloudFiles.filter(f =>
+        !deletedIds.includes(f.id) &&
+        (!f.name || !deletedNames.includes(f.name)) &&
+        (!f.original_name || !deletedNames.includes(f.original_name))
+      );
     }
 
     _cachedCloudData = {
       users: cloudUsers,
       files: cloudFiles,
-      deleted_ids: deletedIds
+      deleted_ids: deletedIds,
+      deleted_names: deletedNames
     };
     _lastFetchTime = Date.now();
 
@@ -274,7 +303,8 @@
         last_updated: Date.now(),
         users: Array.isArray(data.users) ? data.users : [],
         files: Array.isArray(data.files) ? data.files : [],
-        deleted_ids: Array.isArray(data.deleted_ids) ? data.deleted_ids : []
+        deleted_ids: Array.isArray(data.deleted_ids) ? data.deleted_ids : [],
+        deleted_names: Array.isArray(data.deleted_names) ? data.deleted_names : []
       };
       _cachedCloudData = cleanData;
 
@@ -1098,27 +1128,124 @@
         return { folder: newFolder };
       }
 
-      // 10. Delete File (Instant multi-device delete sync)
+      // 10. Delete File (Permanent Cloud & GitHub Physical Storage Deletion)
       if (endpoint.startsWith('/files/') && method === 'DELETE') {
         const fileId = endpoint.replace('/files/', '');
-        files = files.filter(f => f.id !== fileId);
-        localStorage.setItem('velora_offline_files', JSON.stringify(files));
-        idbDeleteBlob(fileId);
 
-        fetchCloudData().then(cloud => {
-          cloud.files = (cloud.files || []).filter(f => f.id !== fileId);
-          if (!cloud.deleted_ids) cloud.deleted_ids = [];
-          if (!cloud.deleted_ids.includes(fileId)) cloud.deleted_ids.push(fileId);
-          if (cloud.deleted_ids.length > 200) cloud.deleted_ids = cloud.deleted_ids.slice(-200);
-          return saveCloudData(cloud);
-        }).then(() => {
-          try {
-            if (window.veloraSyncChannel) {
-              window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+        // 1. Get current local files & IndexedDB
+        let localFiles = JSON.parse(localStorage.getItem('velora_offline_files') || '[]');
+        const targetFile = localFiles.find(f => f.id === fileId) || {};
+        const targetName = targetFile.name || targetFile.original_name || '';
+        const targetCloudUrl = targetFile.cloud_url || '';
+
+        localFiles = localFiles.filter(f => f.id !== fileId);
+        localStorage.setItem('velora_offline_files', JSON.stringify(localFiles));
+        await idbDeleteBlob(fileId);
+
+        // 2. Fetch fresh cloud registry
+        const cloud = await fetchCloudData(true);
+        if (!Array.isArray(cloud.files)) cloud.files = [];
+        if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
+        if (!Array.isArray(cloud.deleted_names)) cloud.deleted_names = [];
+
+        // Find match in cloud files
+        const cloudTarget = cloud.files.find(f => f.id === fileId || (targetName && (f.name === targetName || f.original_name === targetName)));
+        const fileToDeleteName = targetName || (cloudTarget ? (cloudTarget.name || cloudTarget.original_name) : '');
+        const fileToDeleteUrl = targetCloudUrl || (cloudTarget ? (cloudTarget.cloud_url || cloudTarget.stream_url) : '');
+
+        // Remove from cloud files list
+        cloud.files = cloud.files.filter(f =>
+          f.id !== fileId &&
+          (!fileToDeleteName || (f.name !== fileToDeleteName && f.original_name !== fileToDeleteName))
+        );
+
+        // Add to deletion blacklist to permanently block resurrecting
+        if (!cloud.deleted_ids.includes(fileId)) cloud.deleted_ids.push(fileId);
+        if (cloudTarget && cloudTarget.id && !cloud.deleted_ids.includes(cloudTarget.id)) {
+          cloud.deleted_ids.push(cloudTarget.id);
+        }
+        if (fileToDeleteName && !cloud.deleted_names.includes(fileToDeleteName)) {
+          cloud.deleted_names.push(fileToDeleteName);
+        }
+
+        // 3. Physically delete from GitHub repo (data/uploads/)
+        try {
+          const ghToken = getGhToken();
+          let repoUploadName = null;
+
+          if (fileToDeleteUrl && fileToDeleteUrl.includes('data/uploads/')) {
+            const parts = fileToDeleteUrl.split('data/uploads/');
+            if (parts[1]) repoUploadName = decodeURIComponent(parts[1].split('?')[0]);
+          } else if (fileToDeleteName) {
+            const uploadsRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/uploads`, {
+              headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' },
+              cache: 'no-store'
+            });
+            if (uploadsRes.ok) {
+              const items = await uploadsRes.json();
+              if (Array.isArray(items)) {
+                const matched = items.find(it => it.name === fileToDeleteName || it.name.includes(fileToDeleteName.replace(/[^a-zA-Z0-9._-]/g, '_')));
+                if (matched) repoUploadName = matched.name;
+              }
             }
-          } catch(e) {}
-          window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
-        }).catch(() => {});
+          }
+
+          if (repoUploadName) {
+            const getShaRes = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/uploads/${encodeURIComponent(repoUploadName)}`, {
+              headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' },
+              cache: 'no-store'
+            });
+            if (getShaRes.ok) {
+              const getShaJson = await getShaRes.json();
+              if (getShaJson.sha) {
+                await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/data/uploads/${encodeURIComponent(repoUploadName)}`, {
+                  method: 'DELETE',
+                  headers: {
+                    'Authorization': `token ${ghToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.github.v3+json'
+                  },
+                  body: JSON.stringify({
+                    message: `delete: remove ${repoUploadName} from cloud storage`,
+                    sha: getShaJson.sha,
+                    branch: 'main'
+                  })
+                });
+              }
+            }
+          }
+        } catch (delGhErr) {
+          console.warn('[Velora Cloud] GitHub physical file delete warning:', delGhErr);
+        }
+
+        // 4. Physically delete from GitHub Release Vault if stored there
+        try {
+          if (fileId.startsWith('rel_') || (fileToDeleteUrl && fileToDeleteUrl.includes('releases/download/'))) {
+            const ghToken = getGhToken();
+            const assetId = fileId.startsWith('rel_') ? fileId.replace('rel_', '') : null;
+            if (assetId) {
+              await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/assets/${assetId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
+              });
+            }
+          }
+        } catch(relDelErr) {
+          console.warn('[Velora Cloud] Release vault delete warning:', relDelErr);
+        }
+
+        // 5. Commit updated master registry to GitHub
+        await saveCloudData(cloud);
+
+        // 6. Keep local storage strictly matching cloud
+        localStorage.setItem('velora_offline_files', JSON.stringify(cloud.files));
+
+        try {
+          if (window.veloraSyncChannel) {
+            window.veloraSyncChannel.postMessage({ type: 'sync_files', time: Date.now() });
+          }
+        } catch(e) {}
+        window.dispatchEvent(new CustomEvent('velora:cloud_synced'));
 
         return { success: true };
       }

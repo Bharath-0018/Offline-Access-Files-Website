@@ -29,34 +29,27 @@
       "data_url": null
     },
     {
-      "id": "gh_912b3fff795b",
+      "id": "file_1790841295030",
       "user_id": "usr_master_bharath",
       "user_email": "bharathperumal09@gmail.com",
-      "name": "test permanent.txt",
-      "original_name": "test permanent.txt",
-      "category": "documents",
-      "mime_type": "application/pdf",
-      "size_bytes": 51,
-      "created_at": 1791004485661,
-      "cloud_url": "https://raw.githubusercontent.com/Bharath-0018/Offline-Access-Files-Website/main/data/uploads/test_permanent.txt",
-      "stream_url": "https://raw.githubusercontent.com/Bharath-0018/Offline-Access-Files-Website/main/data/uploads/test_permanent.txt"
-    },
-    {
-      "id": "gh_c6c599cb2f31",
-      "user_id": "usr_master_bharath",
-      "user_email": "bharathperumal09@gmail.com",
-      "name": "SIDDHARTH  Resume Final.pdf",
-      "original_name": "SIDDHARTH  Resume Final.pdf",
+      "name": "SIDDHARTH _Resume_Final.pdf",
+      "original_name": "SIDDHARTH _Resume_Final.pdf",
       "category": "documents",
       "mime_type": "application/pdf",
       "size_bytes": 226448,
-      "created_at": 1791006237311,
       "cloud_url": "https://raw.githubusercontent.com/Bharath-0018/Offline-Access-Files-Website/main/data/uploads/file_1790841295030_SIDDHARTH__Resume_Final.pdf",
-      "stream_url": "https://raw.githubusercontent.com/Bharath-0018/Offline-Access-Files-Website/main/data/uploads/file_1790841295030_SIDDHARTH__Resume_Final.pdf"
+      "created_at": 1790841295030,
+      "stream_url": null
     }
   ],
   "deleted_ids": [
-    "file_1790841295030",
-    "gh_3d1191cc6bfa"
+    "gh_3d1191cc6bfa",
+    "gh_912b3fff795b"
+  ],
+  "deleted_names": [
+    "test file.txt",
+    "test permanent.txt",
+    "test_file.txt",
+    "test_permanent.txt"
   ]
 }

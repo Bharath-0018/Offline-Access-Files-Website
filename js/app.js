@@ -1535,19 +1535,21 @@
       if (card) {
         card.style.opacity = '0.3';
         card.style.pointerEvents = 'none';
-        setTimeout(() => card.remove(), 250);
       }
 
+      state.files = state.files.filter(f => f.id !== fileId);
+
       await api.deleteFile(fileId);
+      if (card) card.remove();
       showToast('File deleted successfully.', 'success');
 
       if (state.currentView === 'dashboard') {
-        loadDashboardRecentFiles();
+        await loadDashboardRecentFiles();
       } else if (state.currentView === 'offline') {
         const c = document.getElementById('view-content');
         if (c) renderOfflineMoviesView(c);
       } else {
-        loadFiles();
+        await loadFiles();
       }
       loadStorageStats();
 
@@ -1557,6 +1559,7 @@
       }
     } catch (e) {
       showToast(e.message, 'error');
+      if (state.currentView === 'files') loadFiles();
     }
   };
 
