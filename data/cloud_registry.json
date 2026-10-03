@@ -1,22 +1,17 @@
 {
   "version": 1,
-  "last_updated": 1791008706609,
+  "last_updated": 1791008709391,
   "users": [
     {
-      "id": "user_1791008706609_n475z",
+      "id": "usr_master_bharath",
       "email": "bharathperumal09@gmail.com",
-      "name": "Bharath P",
+      "name": "bharathperumal09",
       "password": "Bharath@2006",
-      "role": "user",
+      "role": "admin",
       "is_verified": true,
       "storageQuotaBytes": 53687091200,
-      "created_at": 1791008706609,
-      "sessions": [
-        {
-          "token": "cloud_token_1791008706609",
-          "createdAt": 1791008706609
-        }
-      ]
+      "created_at": 1791008709391,
+      "sessions": []
     }
   ],
   "files": [],
