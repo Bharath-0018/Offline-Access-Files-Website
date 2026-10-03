@@ -1,7 +1,7 @@
 {
   "version": 1,
   "backend_server_url": "",
-  "last_updated": 1791021494442,
+  "last_updated": 1791021495897,
   "users": [
     {
       "id": "user_1791010801946_tj6al",
@@ -70,7 +70,14 @@
       "is_verified": true,
       "storageQuotaBytes": 53687091200,
       "created_at": 1791021494442,
-      "sessions": []
+      "sessions": [
+        {
+          "token": "cloud_token_1791021495896_u0ksi",
+          "createdAt": 1791021495896
+        }
+      ],
+      "activeFriendsCount": 1,
+      "maxAllowedFriends": 5
     }
   ],
   "files": [
