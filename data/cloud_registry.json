@@ -1,7 +1,7 @@
 {
   "version": 1,
   "backend_server_url": "",
-  "last_updated": 1791021480061,
+  "last_updated": 1791021494442,
   "users": [
     {
       "id": "user_1791010801946_tj6al",
@@ -60,6 +60,17 @@
       ],
       "activeFriendsCount": 2,
       "maxAllowedFriends": 5
+    },
+    {
+      "id": "usr_master_bharath",
+      "email": "bharathperumal09@gmail.com",
+      "name": "bharathperumal09",
+      "password": "Bharath@2006",
+      "role": "admin",
+      "is_verified": true,
+      "storageQuotaBytes": 53687091200,
+      "created_at": 1791021494442,
+      "sessions": []
     }
   ],
   "files": [
