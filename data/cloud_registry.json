@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": 1791008709391,
+  "last_updated": 1791008711078,
   "users": [
     {
       "id": "usr_master_bharath",
@@ -11,7 +11,14 @@
       "is_verified": true,
       "storageQuotaBytes": 53687091200,
       "created_at": 1791008709391,
-      "sessions": []
+      "sessions": [
+        {
+          "token": "cloud_token_1791008711078_mf4os",
+          "createdAt": 1791008711078
+        }
+      ],
+      "activeFriendsCount": 1,
+      "maxAllowedFriends": 5
     }
   ],
   "files": [],
