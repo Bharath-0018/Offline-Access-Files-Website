@@ -33,5 +33,14 @@
     "gh_3d1191cc6bfa",
     "gh_912b3fff795b",
     "file_1790841295030"
+  ],
+  "deleted_names": [
+    "test file.txt",
+    "test permanent.txt",
+    "test_file.txt",
+    "test_permanent.txt",
+    "SIDDHARTH _Resume_Final.pdf",
+    "SIDDHARTH  Resume Final.pdf",
+    "file_1790841295030_SIDDHARTH__Resume_Final.pdf"
   ]
 }
