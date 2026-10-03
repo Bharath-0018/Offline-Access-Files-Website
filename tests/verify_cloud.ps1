@@ -18,7 +18,7 @@ Write-Host "  - Active Files: $($reg.files.Count) (Default/flower video deleted 
 
 # 2. Verify Zero Default / Flower Video References
 Write-Host "`n[Step 2] Verifying Complete Elimination of Default Flower Video..."
-$flowerFound = $reg.files | Where-Object { $_.name -like "*sample*" -or $_.name -like "*Mandaadi*" -or $_.cloud_url -like "*sample.mp4*" }
+$flowerFound = $reg.files | Where-Object { $_.name -like "*sample*" -or $_.cloud_url -like "*sample.mp4*" -or $_.id -eq "file_1791004460404_rzoc" }
 if ($flowerFound) {
     Write-Error "Default flower video still found in cloud files!"
     exit 1

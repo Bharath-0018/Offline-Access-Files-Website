@@ -1419,7 +1419,7 @@
       openUploadProgressModal(file.name, file.size);
 
       try {
-        await api.uploadFileChunked(file, state.currentFolderId, (prog) => {
+        const uploadRes = await api.uploadFileChunked(file, state.currentFolderId, (prog) => {
           activeUploadId = prog.uploadId;
           const bar = document.getElementById('upload-modal-bar');
           const percent = document.getElementById('upload-modal-percent');
@@ -1433,10 +1433,14 @@
         });
 
         activeUploadId = null;
-        setTimeout(() => {
-          closeUploadProgressModal();
-          showToast(`Uploaded "${file.name}" to Velora Cloud in seconds!`, 'success');
-        }, 150);
+        closeUploadProgressModal();
+        showToast(`Uploaded "${file.name}" to Velora Cloud in seconds!`, 'success');
+
+        if (uploadRes && uploadRes.file) {
+          state.files = (state.files || []).filter(f => f.id !== uploadRes.file.id);
+          state.files.unshift(uploadRes.file);
+        }
+
         if (state.currentView === 'dashboard') {
           await loadDashboardRecentFiles();
         } else if (state.currentView === 'offline') {

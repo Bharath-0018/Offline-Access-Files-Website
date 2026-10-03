@@ -22,16 +22,20 @@
     try {
       const db = await getIDB();
       if (!db) return;
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
         const store = tx.objectStore(IDB_STORE);
         store.put(blob, id);
         if (fileName && typeof fileName === 'string') {
           const fnKey = 'fn_' + fileName.trim().toLowerCase();
-          store.put(blob, fnKey);
+          // Lightweight pointer avoids duplicating multi-gigabyte blobs in IDB
+          store.put({ ref: id, name: fileName, size: blob.size }, fnKey);
         }
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
+        tx.onerror = () => {
+          console.warn('IDB put notice:', tx.error);
+          resolve();
+        };
       });
     } catch (e) {
       console.warn('IDB put error:', e);
@@ -47,13 +51,32 @@
         const store = tx.objectStore(IDB_STORE);
         const req1 = store.get(id);
         req1.onsuccess = () => {
-          if (req1.result) {
-            return resolve(req1.result);
+          const res1 = req1.result;
+          if (res1 instanceof Blob) {
+            return resolve(res1);
+          }
+          if (res1 && res1.ref) {
+            const reqRef = store.get(res1.ref);
+            reqRef.onsuccess = () => resolve((reqRef.result instanceof Blob) ? reqRef.result : null);
+            reqRef.onerror = () => resolve(null);
+            return;
           }
           if (fileName && typeof fileName === 'string') {
             const fnKey = 'fn_' + fileName.trim().toLowerCase();
             const req2 = store.get(fnKey);
-            req2.onsuccess = () => resolve(req2.result || null);
+            req2.onsuccess = () => {
+              const res2 = req2.result;
+              if (res2 instanceof Blob) {
+                return resolve(res2);
+              }
+              if (res2 && res2.ref) {
+                const req3 = store.get(res2.ref);
+                req3.onsuccess = () => resolve((req3.result instanceof Blob) ? req3.result : null);
+                req3.onerror = () => resolve(null);
+              } else {
+                resolve(null);
+              }
+            };
             req2.onerror = () => resolve(null);
           } else {
             resolve(null);
@@ -70,7 +93,7 @@
     try {
       const db = await getIDB();
       if (!db) return;
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
         const store = tx.objectStore(IDB_STORE);
         store.delete(id);
@@ -78,7 +101,7 @@
           store.delete('fn_' + fileName.trim().toLowerCase());
         }
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
+        tx.onerror = () => resolve();
       });
     } catch (e) {}
   }
@@ -100,17 +123,38 @@
       const ts = getTombstones();
       if (id && !ts.ids.includes(id)) ts.ids.push(id);
       const clean = (s) => (s || '').trim().toLowerCase();
-      if (name && !ts.names.includes(clean(name))) ts.names.push(clean(name));
-      if (originalName && !ts.names.includes(clean(originalName))) ts.names.push(clean(originalName));
-      if (cloudUrl) {
-        const parts = cloudUrl.split('/');
-        const last = decodeURIComponent(parts[parts.length - 1].split('?')[0]);
-        if (last && !ts.names.includes(clean(last))) ts.names.push(clean(last));
+      // Persistent name blacklist only applies to default test sample videos
+      if (name && (clean(name).includes('sample') || clean(name) === 'sample.mp4')) {
+        if (!ts.names.includes(clean(name))) ts.names.push(clean(name));
       }
       localStorage.setItem('velora_tombstones', JSON.stringify(ts));
       if (!window._deletedSessionIds) window._deletedSessionIds = new Set();
       if (id) window._deletedSessionIds.add(id);
     } catch (e) {}
+  }
+
+  function clearTombstone(fileName, fileId = null) {
+    try {
+      const clean = (s) => (s || '').trim().toLowerCase();
+      const n = clean(fileName);
+      const ts = getTombstones();
+      if (fileId) {
+        ts.ids = ts.ids.filter(x => x !== fileId);
+        if (window._deletedSessionIds) window._deletedSessionIds.delete(fileId);
+      }
+      if (n) {
+        ts.names = ts.names.filter(x => x !== n);
+      }
+      localStorage.setItem('velora_tombstones', JSON.stringify(ts));
+      if (_cachedCloudData) {
+        if (Array.isArray(_cachedCloudData.deleted_ids) && fileId) {
+          _cachedCloudData.deleted_ids = _cachedCloudData.deleted_ids.filter(x => x !== fileId);
+        }
+        if (Array.isArray(_cachedCloudData.deleted_names) && n) {
+          _cachedCloudData.deleted_names = _cachedCloudData.deleted_names.filter(x => x.toLowerCase() !== n);
+        }
+      }
+    } catch(e) {}
   }
 
   function isTombstoned(f) {
@@ -120,13 +164,8 @@
     if (f.id && ts.ids.includes(f.id)) return true;
     const n = (f.name || '').trim().toLowerCase();
     const on = (f.original_name || '').trim().toLowerCase();
-    if (n && ts.names.includes(n)) return true;
-    if (on && ts.names.includes(on)) return true;
-    if (f.cloud_url) {
-      const parts = f.cloud_url.split('/');
-      const last = decodeURIComponent(parts[parts.length - 1].split('?')[0]).toLowerCase();
-      if (last && ts.names.includes(last)) return true;
-    }
+    // Default test flower video permanent exclusion
+    if (n === 'sample.mp4' || on === 'sample.mp4' || (f.cloud_url && f.cloud_url.includes('sample.mp4'))) return true;
     return false;
   }
 
@@ -135,6 +174,7 @@
   global.idbDeleteBlob = idbDeleteBlob;
   global.getTombstones = getTombstones;
   global.addTombstone = addTombstone;
+  global.clearTombstone = clearTombstone;
   global.isTombstoned = isTombstoned;
 
   // --- REAL ONLINE CLOUD STORAGE & CENTRAL DATABASE ENGINE ---
@@ -362,24 +402,17 @@
       }
     });
 
-    // 5. Filter out tombstones & deleted IDs/names
+    // 5. Filter out tombstones & deleted IDs
     const ts = getTombstones();
     const allDeletedIds = new Set([...deletedIds, ...(ts.ids || [])]);
-    const allDeletedNames = new Set([
-      ...deletedNames.map(s => s.toLowerCase()),
-      ...(ts.names || []).map(s => s.toLowerCase())
-    ]);
     if (window._deletedSessionIds) {
       window._deletedSessionIds.forEach(id => allDeletedIds.add(id));
     }
 
     cloudFiles = cloudFiles.filter(f => {
+      if (!f) return false;
       if (isTombstoned(f)) return false;
       if (allDeletedIds.has(f.id)) return false;
-      const n = (f.name || '').trim().toLowerCase();
-      const on = (f.original_name || '').trim().toLowerCase();
-      if (n && allDeletedNames.has(n)) return false;
-      if (on && allDeletedNames.has(on)) return false;
       return true;
     });
 
@@ -1180,13 +1213,8 @@
           localStorage.setItem('velora_offline_files', JSON.stringify(allFiles));
         }
 
+        // All files in this personal cloud vault belong to this shared account
         let userFiles = allFiles;
-        if (currentEmail) {
-          userFiles = allFiles.filter(f => {
-            const fEmail = (f.user_email || '').trim().toLowerCase();
-            return !fEmail || fEmail === currentEmail || currentEmail === 'bharathperumal09@gmail.com' || f.user_id === 'usr_master_bharath';
-          });
-        }
 
         // Query parameters filtering & sorting
         try {
@@ -1638,6 +1666,8 @@
           });
         }
 
+        clearTombstone(file.name, fileId);
+
         await idbPutBlob(fileId, file, file.name);
         const blobUrl = URL.createObjectURL(file);
         this.blobUrlCache.set(fileId, blobUrl);
@@ -1702,6 +1732,18 @@
         files.unshift(newFileRecord);
         localStorage.setItem('velora_offline_files', JSON.stringify(files));
 
+        // Update in-memory cache immediately so instant loadFiles sees it!
+        if (_cachedCloudData && Array.isArray(_cachedCloudData.files)) {
+          _cachedCloudData.files = _cachedCloudData.files.filter(f => f.id !== newFileRecord.id);
+          _cachedCloudData.files.unshift(newFileRecord);
+          if (Array.isArray(_cachedCloudData.deleted_ids)) {
+            _cachedCloudData.deleted_ids = _cachedCloudData.deleted_ids.filter(x => x !== fileId);
+          }
+          if (Array.isArray(_cachedCloudData.deleted_names)) {
+            _cachedCloudData.deleted_names = _cachedCloudData.deleted_names.filter(x => x.toLowerCase() !== file.name.trim().toLowerCase());
+          }
+        }
+
         // 100% complete progress feedback
         if (onProgress) {
           onProgress({
@@ -1726,13 +1768,18 @@
 
         // Save immediately to Master Cloud Registry database
         try {
-          const cloud = await fetchCloudData(true);
+          let cloud = _cachedCloudData;
+          if (!cloud || !Array.isArray(cloud.files)) {
+            cloud = await fetchCloudData(false);
+          }
           if (!Array.isArray(cloud.files)) cloud.files = [];
           if (!Array.isArray(cloud.deleted_ids)) cloud.deleted_ids = [];
+          if (!Array.isArray(cloud.deleted_names)) cloud.deleted_names = [];
           cloud.deleted_ids = cloud.deleted_ids.filter(id => id !== newFileRecord.id);
+          cloud.deleted_names = cloud.deleted_names.filter(n => n.toLowerCase() !== file.name.trim().toLowerCase());
           cloud.files = cloud.files.filter(f => f.id !== newFileRecord.id);
           cloud.files.unshift(newFileRecord);
-          await saveCloudData(cloud);
+          saveCloudData(cloud).catch(err => console.warn('Background saveCloudData error:', err));
         } catch(e) {
           console.warn('[Velora Cloud] Background cloud sync warning:', e);
         }
@@ -2025,7 +2072,7 @@
     if (rawFiles) {
       let parsed = JSON.parse(rawFiles);
       if (Array.isArray(parsed)) {
-        parsed = parsed.filter(f => !purgeIds.includes(f.id) && !f.name.includes('Mandaadi') && !f.name.includes('sample.mp4'));
+        parsed = parsed.filter(f => !purgeIds.includes(f.id) && !f.name.includes('sample.mp4'));
         localStorage.setItem('velora_offline_files', JSON.stringify(parsed));
       }
     }
